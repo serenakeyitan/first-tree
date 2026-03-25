@@ -19,7 +19,7 @@ FRAMEWORK_DIR = ".context-tree"
 TEMPLATE_MAP = [
     ("root-node.md.template", "NODE.md"),
     ("agent.md.template", "AGENT.md"),
-    ("member-node.md.template", "members/NODE.md"),
+    ("members-domain.md.template", "members/NODE.md"),
 ]
 
 
@@ -100,6 +100,15 @@ def _format_task_list(groups: list[dict]) -> str:
     lines.append("- [ ] AGENT.md exists with framework markers")
     lines.append("- [ ] `validate_nodes.py` passes with no errors")
     lines.append("- [ ] At least one member node exists")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+    lines.append(
+        "**Important:** As you complete each task, check it off in"
+        " `.context-tree/progress.md` by changing `- [ ]` to `- [x]`."
+        " Run `context-tree verify` when done — it will fail if any"
+        " items remain unchecked."
+    )
     lines.append("")
     return "\n".join(lines)
 
