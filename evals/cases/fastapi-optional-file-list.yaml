@@ -1,0 +1,36 @@
+# Eval case: Optional[List[bytes]] file upload causes TypeError
+# Based on: https://github.com/fastapi/fastapi/pull/14297
+# Bug: origin_type resolves to Union for optional sequences, and Union
+#      is not a valid argument to issubclass().
+
+id: fastapi-optional-file-list
+source: custom
+repo: fastapi/fastapi
+commit_sha: "3c54a8f07b70cdd40e3d81ea319e9fcccd2481d2"
+task: |
+  Fix a bug where optional file upload parameters crash with a TypeError.
+
+  Defining a FastAPI endpoint with `Optional[List[bytes]]` (or
+  `Union[List[str], None]`) as a parameter annotation with `File(None)` causes:
+
+    TypeError: issubclass() arg 1 must be a class
+
+  The crash happens when the endpoint tries to serialize the sequence value.
+  Non-optional `List[bytes]` works fine; the bug only triggers when the list
+  type is wrapped in `Optional` or `Union[..., None]`.
+
+  Find and fix the root cause. Write tests that verify:
+  1. An endpoint with `Optional[List[bytes]] = File(None)` accepts file uploads
+  2. The same endpoint returns a valid response when no files are sent
+setup: |
+  uv venv .venv --quiet
+  uv pip install -e ".[all]" --quiet --python .venv/bin/python
+  uv pip install pytest httpx python-multipart --quiet --python .venv/bin/python
+verification: fixtures/fastapi-optional-file-list/verify.sh
+difficulty: medium
+timeout_ms: 600000
+max_turns: 30
+
+context_tree_versions:
+  - label: cli-v0.0.2
+    tree_sha: "47d18eb812f5aa83b52ebac57f11864de18625f3"

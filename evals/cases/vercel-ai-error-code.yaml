@@ -1,0 +1,37 @@
+# Eval case: Provider-executed tool error code lost in streaming
+# Based on: https://github.com/vercel/ai/pull/13256
+# Issue: https://github.com/vercel/ai/issues/12203
+# Bug: Structured error data from provider-executed tools is lost through
+#      toUIMessageStream. Error code falls back to 'unknown', Anthropic rejects.
+
+id: vercel-ai-error-code
+source: custom
+repo: vercel/ai
+commit_sha: "7362d1ecc26e334eb02c5289c1c314667b524eeb"
+task: |
+  Fix a bug where provider-executed tool errors cause Anthropic API 400 errors
+  on the follow-up request.
+
+  When a provider-executed tool (like `web_fetch`) returns a structured error
+  (e.g. `{ type: 'web_fetch_tool_result_error', errorCode: 'url_not_accessible' }`),
+  the error data is lost somewhere in the streaming pipeline. By the time the
+  next request is sent to Anthropic, the error code has become `unknown`, and
+  Anthropic rejects it with a 400 because `unknown` is not a valid error code.
+
+  The structured error object should survive the streaming pipeline intact so
+  that valid error codes are preserved. Additionally, when no error code is
+  available at all, the fallback should be a code that Anthropic actually accepts.
+
+  Find and fix the root cause(s). Write tests that verify structured error data
+  from provider-executed tools is preserved through the streaming pipeline.
+setup: |
+  pnpm install
+  pnpm build
+verification: fixtures/vercel-ai-error-code/verify.sh
+difficulty: medium
+timeout_ms: 600000
+max_turns: 40
+
+context_tree_versions:
+  - label: cli-v0.0.2
+    tree_sha: "a6161a18648c217ae4e615c0c109d58027055d80"
