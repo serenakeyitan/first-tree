@@ -22,7 +22,9 @@
     "context-tree": "./dist/cli.js"
   },
   "imports": {
-    "#skill/*": "./skills/first-tree/*"
+    "#skill/*": "./skills/first-tree/*",
+    "#evals/*": "./evals/*",
+    "#src/*": "./src/*"
   },
   "files": [
     "dist",

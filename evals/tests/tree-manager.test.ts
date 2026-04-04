@@ -11,9 +11,9 @@ import {
   treeCommitMessage,
   parseArgs,
   type TreeProvenance,
-} from '../scripts/tree-manager.js';
-import { resolveConditions } from '../helpers/resolve-conditions.js';
-import type { EvalCase } from '../helpers/types.js';
+} from '#evals/scripts/tree-manager.js';
+import { resolveConditions } from '#evals/helpers/resolve-conditions.js';
+import type { EvalCase } from '#evals/helpers/types.js';
 
 // --- treeBranch ---
 

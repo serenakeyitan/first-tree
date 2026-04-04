@@ -37,9 +37,10 @@ import {
   initBareTreeDir,
   type CreateTreeOptions,
   type TreeProvenance,
-} from './tree-manager.js';
-import { runSession } from '../helpers/session-runner.js';
-import type { AgentConfig } from '../helpers/types.js';
+} from '#evals/scripts/tree-manager.js';
+import { runSession } from '#evals/helpers/session-runner.js';
+import type { AgentConfig } from '#evals/helpers/types.js';
+import { TIMEOUT_POPULATE } from '#evals/helpers/timeouts.js';
 
 function buildPrompt(codeDir: string): string {
   return `You are initializing and populating a context tree for a codebase.
@@ -55,10 +56,10 @@ You are working in a context tree repository. This is where the context tree wil
 Run \`context-tree help onboarding\` to understand what a context tree is, how it is structured, and the full setup workflow.
 
 ## Step 2: Initialize
-Run \`context-tree init\` in this directory. This bootstraps the framework, creates template files, and generates a task list in skills/first-tree/progress.md.
+Run \`context-tree init\` in this directory. This bootstraps the framework, creates template files, and generates a task list in .context-tree/progress.md.
 
 ## Step 3: Complete the task list
-Read skills/first-tree/progress.md and complete every task. Check off each task as you finish it by changing \`- [ ]\` to \`- [x]\`.
+Read .context-tree/progress.md and complete every task. Check off each task as you finish it by changing \`- [ ]\` to \`- [x]\`.
 
 ## Step 4: Populate the full tree
 When the task list asks whether to populate the tree, choose **Yes**. Then:
@@ -81,7 +82,6 @@ When the task list asks whether to populate the tree, choose **Yes**. Then:
 }
 
 const POPULATE_MAX_TURNS = 80;
-const POPULATE_TIMEOUT = 900_000; // 15 minutes
 
 export async function createTree(options: CreateTreeOptions): Promise<{ branch: string; sha: string }> {
   const { repo, commit, cliVersion, treeRepo, model = 'claude-sonnet-4-6' } = options;
@@ -127,7 +127,7 @@ export async function createTree(options: CreateTreeOptions): Promise<{ branch: 
       workingDirectory: treeDir,
       agent,
       maxTurns: POPULATE_MAX_TURNS,
-      timeout: POPULATE_TIMEOUT,
+      timeout: TIMEOUT_POPULATE,
       testName: `create-tree/${repo}`,
     });
 

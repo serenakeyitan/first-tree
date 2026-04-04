@@ -12,16 +12,18 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { spawnSync } from 'node:child_process';
-import type { TrialResult, EvalRun } from './types.js';
-import { generateHtmlReport } from './html-report.js';
+import type { TrialResult, EvalRun } from '#evals/helpers/types.js';
+import { generateHtmlReport } from '#evals/helpers/html-report.js';
+import { getEnv } from '#evals/helpers/env.js';
+import { TIMEOUT_GIT_INFO } from '#evals/helpers/timeouts.js';
 
 const SCHEMA_VERSION = 1;
-const EVAL_DIR = path.join(os.homedir(), '.context-tree', 'evals');
+const EVAL_DIR = getEnv('EVALS_STORE_DIR', '~/.context-tree/evals')!;
 
 function getGitInfo(): { branch: string; sha: string } {
   try {
-    const branch = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { stdio: 'pipe', timeout: 5000 });
-    const sha = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { stdio: 'pipe', timeout: 5000 });
+    const branch = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { stdio: 'pipe', timeout: TIMEOUT_GIT_INFO });
+    const sha = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { stdio: 'pipe', timeout: TIMEOUT_GIT_INFO });
     return {
       branch: branch.stdout?.toString().trim() || 'unknown',
       sha: sha.stdout?.toString().trim() || 'unknown',
@@ -81,12 +83,11 @@ export class EvalCollector {
     // Write HTML report
     const htmlFilename = filename.replace('.json', '.html');
     const htmlPath = path.join(this.evalDir, htmlFilename);
-    const git = getGitInfo();
     const htmlContent = generateHtmlReport(this.trials, {
       model: this.model,
       cli: this.cli,
-      branch: git.branch,
-      sha: git.sha,
+      branch: run.branch,
+      sha: run.git_sha,
       timestamp: run.timestamp,
     });
     fs.writeFileSync(htmlPath, htmlContent);
