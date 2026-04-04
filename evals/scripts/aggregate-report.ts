@@ -3,16 +3,16 @@
  * Aggregate multiple eval result JSON files into a single HTML report.
  *
  * Usage:
- *   npx tsx skills/first-tree-cli-framework/evals/scripts/aggregate-report.ts file1.json file2.json ...
- *   npx tsx skills/first-tree-cli-framework/evals/scripts/aggregate-report.ts ~/.context-tree/evals/feat-eval-phase1-2026-04-03-05*.json
+ *   npx tsx evals/scripts/aggregate-report.ts file1.json file2.json ...
+ *   npx tsx evals/scripts/aggregate-report.ts ~/.context-tree/evals/feat-eval-phase1-2026-04-03-05*.json
  *
  * Outputs an HTML file to the same directory as the first input file.
  */
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { TrialResult, EvalRun } from '#evals/helpers/types.js';
-import { generateHtmlReport } from '#evals/helpers/html-report.js';
+import type { TrialResult, EvalRun } from '../helpers/types.js';
+import { generateHtmlReport } from '../helpers/html-report.js';
 
 const files = process.argv.slice(2);
 if (files.length === 0) {

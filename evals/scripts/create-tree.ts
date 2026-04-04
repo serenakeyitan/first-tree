@@ -11,7 +11,7 @@
  * 5. Commit and push
  *
  * Usage:
- *   npx tsx skills/first-tree-cli-framework/evals/scripts/create-tree.ts \
+ *   npx tsx evals/scripts/create-tree.ts \
  *     --repo HKUDS/nanobot \
  *     --commit ddc9fc4f \
  *     --cli-version abc123 \
@@ -38,8 +38,8 @@ import {
   type CreateTreeOptions,
   type TreeProvenance,
 } from './tree-manager.js';
-import { runSession } from '#evals/helpers/session-runner.js';
-import type { AgentConfig } from '#evals/helpers/types.js';
+import { runSession } from '../helpers/session-runner.js';
+import type { AgentConfig } from '../helpers/types.js';
 
 function buildPrompt(codeDir: string): string {
   return `You are initializing and populating a context tree for a codebase.
