@@ -12,6 +12,7 @@ import {
 import {
   makeAgentsMd,
   makeFramework,
+  makeSourceRepo,
   makeLegacyFramework,
   makeLegacyNamedFramework,
   makeSourceSkill,
@@ -91,5 +92,12 @@ describe("runUpgrade", () => {
     expect(result).toBe(1);
     expect(readFileSync(join(repoDir.path, FRAMEWORK_VERSION), "utf-8").trim()).toBe("0.3.0");
     expect(existsSync(join(repoDir.path, INSTALLED_PROGRESS))).toBe(false);
+  });
+
+  it("gives a dedicated-tree hint when run from a source repo", () => {
+    const repoDir = useTmpDir();
+    makeSourceRepo(repoDir.path);
+    const result = runUpgrade(new Repo(repoDir.path));
+    expect(result).toBe(1);
   });
 });

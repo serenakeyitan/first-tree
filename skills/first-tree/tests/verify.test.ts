@@ -15,6 +15,7 @@ import {
   makeFramework,
   makeLegacyFramework,
   makeNode,
+  makeSourceRepo,
   makeMembers,
   makeSourceSkill,
 } from "./helpers.js";
@@ -227,6 +228,14 @@ describe("runVerify failing", () => {
     buildFullRepo(tmp.path);
     const repo = new Repo(tmp.path);
     const ret = runVerify(repo, failValidator);
+    expect(ret).toBe(1);
+  });
+
+  it("gives a dedicated-tree hint when run from a source repo", () => {
+    const tmp = useTmpDir();
+    makeSourceRepo(tmp.path);
+    const repo = new Repo(tmp.path);
+    const ret = runVerify(repo, passValidator);
     expect(ret).toBe(1);
   });
 });
