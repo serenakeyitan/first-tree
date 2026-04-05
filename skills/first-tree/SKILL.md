@@ -82,8 +82,9 @@ repos.
 - `first-tree init` installs this skill into the target tree repo and
   scaffolds `.agents/skills/first-tree/`, `.claude/skills/first-tree/`,
   `NODE.md`, `AGENTS.md`, `CLAUDE.md`, and `members/NODE.md`.
-- The default source/workspace workflow is: run `first-tree init` from the
-  `NODE.md`, `AGENTS.md`, `CLAUDE.md`, and `members/NODE.md`.
+- `first-tree init --seed-members contributors` is an explicit bootstrap aid:
+  it seeds `members/*/NODE.md` from GitHub contributors when available, and
+  falls back to local git history when GitHub metadata is unavailable.
 - The default source/workspace workflow is: run `first-tree init` from the
   source repo, draft the first tree version in `<repo>-context`, then run
   `first-tree publish --open-pr` from that dedicated tree repo.

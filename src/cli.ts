@@ -20,6 +20,7 @@ Options:
 
 Common examples:
   first-tree init
+  first-tree init --seed-members contributors
   first-tree publish --open-pr
   mkdir my-org-context && cd my-org-context && git init && first-tree init --here
   first-tree verify --tree-path ../my-org-context

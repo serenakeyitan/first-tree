@@ -45,6 +45,13 @@ cd ../my-app-context
 first-tree publish --open-pr
 ```
 
+If you want the initial bootstrap to draft `members/*/NODE.md` from the
+repository's contributor history, opt in explicitly:
+
+```bash
+npx first-tree init --seed-members contributors
+```
+
 If you already created a dedicated tree repo yourself, initialize it in place:
 
 ```bash
@@ -61,8 +68,11 @@ that repo itself to become the Context Tree.
   `.claude/skills/first-tree/` in the current source/workspace repo, appends a
   single `FIRST-TREE-SOURCE-INTEGRATION:` line to root `AGENTS.md` and
   `CLAUDE.md`, then creates `NODE.md`, tree-scoped `AGENTS.md`,
-  `members/NODE.md`, and a checklist in the dedicated tree repo at
+  tree-scoped `CLAUDE.md`, `members/NODE.md`, and a checklist in the dedicated tree repo at
   `.agents/skills/first-tree/progress.md`.
+- `first-tree init --seed-members contributors` also seeds
+  `members/*/NODE.md` in the target tree repo from GitHub contributors when
+  available, and falls back to local git history otherwise.
 - Never create `NODE.md`, `members/`, or tree-scoped `AGENTS.md` in the
   source/workspace repo. Those files live only in the dedicated `*-context`
   repo.
@@ -91,7 +101,7 @@ runtime.
 
 | Command | What it does |
 | --- | --- |
-| `first-tree init` | Install source/workspace integration locally and create or refresh a dedicated context tree repo; use `--here` only when you are already inside the dedicated tree repo |
+| `first-tree init` | Install source/workspace integration locally and create or refresh a dedicated context tree repo; use `--here` only when you are already inside the dedicated tree repo, and `--seed-members contributors` to draft member nodes from contributor history |
 | `first-tree publish` | Publish a dedicated tree repo to GitHub, add it back to the source/workspace repo as a submodule, and optionally open the source-repo PR |
 | `first-tree verify` | Run verification checks against the current tree |
 | `first-tree upgrade` | Refresh the installed skill from the current `first-tree` npm package; in a source/workspace repo it updates only local integration, while tree repos also get follow-up tasks |

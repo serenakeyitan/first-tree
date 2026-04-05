@@ -80,6 +80,8 @@ skill discovery and hooks.
     `AGENTS.md` and `CLAUDE.md`
   - installs the skill into the target tree repo
   - renders top-level tree scaffolding only in the target tree repo
+  - may optionally seed `members/*/NODE.md` from repository contributor history
+    when `--seed-members contributors` is set
   - renders both `AGENTS.md` and `CLAUDE.md` in the target tree repo
   - writes progress state only to the dedicated tree repo at
     `.agents/skills/first-tree/progress.md`
