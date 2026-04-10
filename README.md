@@ -13,12 +13,12 @@ Paste one of these into your agent (Claude Code, Codex, or any agent you are usi
 
 If you are the first person on your team to set up a Context Tree:
 ```text
-Use the latest first-tree CLI (https://github.com/agent-team-foundation/first-tree). First run `first-tree inspect --json` to determine whether the current folder is a single repo or a multi-repo workspace. Then install the skill in the current repo or workspace root and complete the onboarding process by creating the appropriate new Context Tree setup for this team.
+Use the latest first-tree CLI (https://github.com/agent-team-foundation/first-tree). First run `first-tree inspect --json` to determine whether the current folder is a single repo or a multi-repo workspace. If it is a multi-repo workspace, treat it as one workspace and create a single shared Context Tree for all repos in the current folder by default, rather than creating one tree per repo. Then install the skill in the current repo or workspace root and complete the onboarding process by creating the appropriate new Context Tree setup for this team.
 ```
 
 If your team already has a Context Tree:
 ```text
-Use the latest first-tree CLI (https://github.com/agent-team-foundation/first-tree). First run `first-tree inspect --json` to determine whether the current folder is a single repo or a multi-repo workspace. Then install the skill in the current repo or workspace root and complete the onboarding process by connecting this repo or workspace to the existing shared Context Tree at `https://github.com/<your-organization>/<your-tree-repo-name>`.
+Use the latest first-tree CLI (https://github.com/agent-team-foundation/first-tree). First run `first-tree inspect --json` to determine whether the current folder is a single repo or a multi-repo workspace. If it is a multi-repo workspace, treat it as one workspace and connect all repos in the current folder to the same shared Context Tree by default, rather than binding each repo to its own separate tree. Then install the skill in the current repo or workspace root and complete the onboarding process by connecting this repo or workspace to the existing shared Context Tree at `https://github.com/<your-organization>/<your-tree-repo-name>`.
 ```
 
 ## Install And Run
