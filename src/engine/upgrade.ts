@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import {
   buildDefaultTreeRepoName,
@@ -70,6 +70,34 @@ Options:
   --tree-path PATH   Upgrade a tree repo from another working directory
   --help             Show this help message
 `;
+
+const RECONCILE_RUNBOOK_REL_PATH = join(".claude", "commands", "first-tree-reconcile.md");
+const RECONCILE_RUNBOOK_ASSET_REL_PATH = join(
+  "assets",
+  "framework",
+  "claude-commands",
+  "first-tree-reconcile.md",
+);
+
+export function ensureReconcileRunbook(
+  treeRoot: string,
+  sourceRoot: string,
+): "created" | "unchanged" | "missing-source" {
+  const targetPath = join(treeRoot, RECONCILE_RUNBOOK_REL_PATH);
+  if (existsSync(targetPath)) {
+    return "unchanged";
+  }
+  const sourcePath = join(sourceRoot, RECONCILE_RUNBOOK_ASSET_REL_PATH);
+  if (!existsSync(sourcePath)) {
+    return "missing-source";
+  }
+  mkdirSync(dirname(targetPath), { recursive: true });
+  copyFileSync(sourcePath, targetPath);
+  console.log(
+    `Installed reconcile runbook at \`${RECONCILE_RUNBOOK_REL_PATH}\`.`,
+  );
+  return "created";
+}
 
 function writeProgress(repo: Repo, content: string): void {
   const progressPath = join(repo.root, repo.preferredProgressPath());
@@ -159,6 +187,9 @@ function formatUpgradeTaskList(
       "## Tree Metadata",
       `- [ ] Confirm the tree-repo skill at ${installedSkillRootsDisplay()} still resolves correctly after the refresh`,
       "- [ ] Replace any stale `context-tree` CLI command references in repo-specific docs, scripts, workflows, or agent config with `first-tree`",
+      "",
+      "## Reconcile",
+      "- [ ] Review .claude/commands/first-tree-reconcile.md and set up scheduling via /schedule or cron",
       "",
     );
   } else {
@@ -460,6 +491,7 @@ export function runUpgrade(repo?: Repo, options?: UpgradeOptions): number {
       && compareSkillVersions(installedTreeSkillVersion, packagedVersion) === 0;
 
     if (treeMetadataUpToDate && treeSkillUpToDate) {
+      ensureReconcileRunbook(workingRepo.root, sourceRoot);
       console.log(
         `Already up to date with the bundled tree metadata and installed tree skill (${workingRepo.frameworkVersionPath()} = ${localVersion}).`,
       );
@@ -475,6 +507,7 @@ export function runUpgrade(repo?: Repo, options?: UpgradeOptions): number {
     if (!treeSkillUpToDate) {
       const wipedPaths = wipeInstalledSkill(workingRepo.root);
       copyCanonicalSkill(sourceRoot, workingRepo.root);
+      ensureReconcileRunbook(workingRepo.root, sourceRoot);
       if (wipedPaths.length > 0) {
         console.log(
           `Wiped previous tree skill installation: ${wipedPaths.map((p) => `\`${p}/\``).join(", ")}.`,
@@ -483,6 +516,8 @@ export function runUpgrade(repo?: Repo, options?: UpgradeOptions): number {
       console.log(
         `Refreshed tree-repo skill payload at ${installedSkillRootsDisplay()}.`,
       );
+    } else {
+      ensureReconcileRunbook(workingRepo.root, sourceRoot);
     }
 
     const output = formatUpgradeTaskList(
