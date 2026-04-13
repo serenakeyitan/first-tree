@@ -824,81 +824,38 @@ async function applyProposalGroup(
     return false;
   }
 
-  // Collect all directories that will contain NODE.md files
-  const createdDirs = new Set<string>();
-
+  // Write nodes directly to real tree paths (not drift/)
   for (const proposal of group.proposals) {
     if (proposal.type === "TREE_OK") continue;
     if (proposal.type === "TREE_MISS") {
       const dirSegment = proposal.path === "(root)" ? "misc" : proposal.path;
-      const relDir = join("drift", binding.sourceId, dirSegment);
-      const absDir = join(treeRoot, relDir);
+      const absDir = join(treeRoot, dirSegment);
       mkdirSync(absDir, { recursive: true });
-      createdDirs.add(relDir);
-      const owners = extractOwnersFromCodeowners(treeRoot, relDir);
+      const owners = [...new Set(extractOwnersFromCodeowners(treeRoot, dirSegment))];
       const title = proposal.suggested_node_title;
+      // Capitalize first letter of title
+      const capitalizedTitle = title.charAt(0).toUpperCase() + title.slice(1);
       const body = proposal.suggested_node_body_markdown;
-      const content = [
-        "---",
-        `title: "${title.replace(/"/g, '\\"')}"`,
-        `owners: [${owners.join(", ")}]`,
-        "---",
-        "",
-        body,
-        "",
-      ].join("\n");
-      writeFileSync(join(absDir, "NODE.md"), content);
-    }
-  }
-
-  // Ensure every intermediate directory under drift/ has a NODE.md
-  // so that verify doesn't fail on "directory without NODE.md"
-  for (const dir of createdDirs) {
-    const parts = dir.split("/");
-    for (let i = 1; i <= parts.length; i++) {
-      const parentRel = parts.slice(0, i).join("/");
-      const parentNodePath = join(treeRoot, parentRel, "NODE.md");
-      if (!existsSync(parentNodePath)) {
-        mkdirSync(join(treeRoot, parentRel), { recursive: true });
-        const parentTitle = parts[i - 1] ?? "Drift";
-        writeFileSync(
-          parentNodePath,
-          [
-            "---",
-            `title: "${parentTitle}"`,
-            "owners: []",
-            "---",
-            "",
-            `Auto-generated intermediate node for sync proposals.`,
-            "",
-          ].join("\n"),
-        );
+      const nodePath = join(absDir, "NODE.md");
+      // Only write if NODE.md doesn't already exist (don't overwrite human-authored nodes)
+      if (!existsSync(nodePath)) {
+        const content = [
+          "---",
+          `title: "${capitalizedTitle.replace(/"/g, '\\"')}"`,
+          `owners: [${owners.join(", ")}]`,
+          "---",
+          "",
+          body,
+          "",
+        ].join("\n");
+        writeFileSync(nodePath, content);
       }
     }
   }
 
-  // Ensure root NODE.md lists drift/ as a domain (verify requires it)
-  if (createdDirs.size > 0) {
-    const rootNodePath = join(treeRoot, "NODE.md");
-    if (existsSync(rootNodePath)) {
-      let rootContent = readFileSync(rootNodePath, "utf-8");
-      if (!rootContent.includes("[drift/](drift/NODE.md)")) {
-        // Append drift domain link before the last line or at the end
-        const driftLink = `- **[drift/](drift/NODE.md)** — Sync proposals pending review.\n`;
-        rootContent = rootContent.trimEnd() + "\n\n" + driftLink;
-        writeFileSync(rootNodePath, rootContent);
-      }
-    }
-  }
-
-  // NOTE: CODEOWNERS is NOT generated per-PR to avoid merge conflicts.
-  // A single housekeeping PR regenerates it after all sync PRs merge.
-
-  writeTreeBinding(treeRoot, binding.sourceId, {
-    ...binding,
-    lastReconciledSourceCommit: drift.toSha,
-    lastReconciledAt: now().toISOString(),
-  });
+  // NOTE: Neither CODEOWNERS nor the binding pin are updated per-PR.
+  // Both are handled in the housekeeping PR after all sync PRs merge,
+  // to avoid cascade merge conflicts.
 
   const addResult = await shellRun("git", ["add", "-A"], { cwd: treeRoot });
   if (addResult.code !== 0) {
@@ -1268,35 +1225,50 @@ export async function runSync(
         await shellRun("git", ["checkout", "-"], { cwd: repo.root });
       }
 
-      // Open a housekeeping PR to regenerate CODEOWNERS after all sync PRs merge
+      // Open a housekeeping PR: pin the binding + regenerate CODEOWNERS
+      // This is the ONLY PR that touches the binding file and CODEOWNERS,
+      // avoiding cascade merge conflicts between individual sync PRs.
       if (!flags.dryRun && applyCount > 0) {
-        console.log("\nOpening housekeeping PR to regenerate CODEOWNERS...");
-        const hkBranch = `first-tree/sync-${drift.binding.sourceId}-codeowners`;
+        console.log("\nOpening housekeeping PR (binding pin + CODEOWNERS)...");
+        const hkBranch = `first-tree/sync-${drift.binding.sourceId}-housekeeping`;
         await shellRun("git", ["checkout", "-B", hkBranch], { cwd: repo.root });
+
+        // Pin the binding to the latest synced commit
+        writeTreeBinding(repo.root, drift.binding.sourceId, {
+          ...drift.binding,
+          lastReconciledSourceCommit: drift.toSha,
+          lastReconciledAt: now().toISOString(),
+        });
+
+        // Regenerate CODEOWNERS
         await runGenerateCodeownersForTree(repo.root);
-        const hkAdd = await shellRun("git", ["add", ".github/CODEOWNERS"], { cwd: repo.root });
-        if (hkAdd.code === 0) {
-          const hkDiff = await shellRun("git", ["diff", "--cached", "--quiet"], { cwd: repo.root });
-          if (hkDiff.code !== 0) {
-            // There are staged changes
-            await shellRun("git", ["commit", "-m", "chore(sync): regenerate CODEOWNERS after sync"], { cwd: repo.root });
-            await shellRun("git", ["push", "origin", "HEAD"], { cwd: repo.root });
-            const hkPr = await shellRun("gh", [
-              "pr", "create",
-              "--title", `chore(sync): regenerate CODEOWNERS for ${drift.binding.sourceId}`,
-              "--body", "Housekeeping PR — regenerates CODEOWNERS after sync PRs have been merged.\n\nMerge this AFTER all sync PRs are merged.",
-            ], { cwd: repo.root });
-            if (hkPr.code === 0) {
-              console.log(`\u2713 Housekeeping PR opened: ${hkPr.stdout.trim()}`);
-              console.log("  Merge this AFTER all sync PRs are merged.");
-            }
-          } else {
-            console.log("  CODEOWNERS unchanged — no housekeeping PR needed.");
+
+        await shellRun("git", ["add", "-A"], { cwd: repo.root });
+        const hkDiff = await shellRun("git", ["diff", "--cached", "--quiet"], { cwd: repo.root });
+        if (hkDiff.code !== 0) {
+          await shellRun("git", ["commit", "-m", `chore(sync): pin ${drift.binding.sourceId} to ${drift.toSha.slice(0, 7)} + regenerate CODEOWNERS`], { cwd: repo.root });
+          await shellRun("git", ["push", "origin", "HEAD"], { cwd: repo.root });
+          const hkPr = await shellRun("gh", [
+            "pr", "create",
+            "--title", `chore(sync): housekeeping for ${drift.binding.sourceId}`,
+            "--body", [
+              "Housekeeping PR — pins the sync bookmark and regenerates CODEOWNERS.",
+              "",
+              "**Merge this AFTER all sync PRs are merged.**",
+              "",
+              `Pins \`lastReconciledSourceCommit\` to \`${drift.toSha.slice(0, 7)}\`.`,
+            ].join("\n"),
+          ], { cwd: repo.root });
+          if (hkPr.code === 0) {
+            console.log(`\u2713 Housekeeping PR opened: ${hkPr.stdout.trim()}`);
+            console.log("  Merge this AFTER all other sync PRs are merged.");
           }
+        } else {
+          console.log("  No changes for housekeeping PR.");
         }
         await shellRun("git", ["checkout", "-"], { cwd: repo.root });
       } else if (flags.dryRun && applyCount > 0) {
-        console.log("\n(dry-run) would open a housekeeping PR to regenerate CODEOWNERS after all sync PRs merge");
+        console.log(`\n(dry-run) would open housekeeping PR to pin binding to ${drift.toSha.slice(0, 7)} + regenerate CODEOWNERS`);
       }
     }
   }
