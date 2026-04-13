@@ -762,18 +762,14 @@ async function applyProposalGroup(
     }
   }
 
-  const branchCreate = await shellRun("git", ["checkout", "-b", branch], {
+  const branchCreate = await shellRun("git", ["checkout", "-B", branch], {
     cwd: treeRoot,
   });
   if (branchCreate.code !== 0) {
-    // Maybe branch exists -- try checking it out
-    const fallback = await shellRun("git", ["checkout", branch], { cwd: treeRoot });
-    if (fallback.code !== 0) {
-      console.error(
-        `\u274C could not create branch ${branch}: ${branchCreate.stderr.trim()}`,
-      );
-      return false;
-    }
+    console.error(
+      `\u274C could not create branch ${branch}: ${branchCreate.stderr.trim()}`,
+    );
+    return false;
   }
 
   // Collect all directories that will contain NODE.md files
@@ -1165,6 +1161,14 @@ export async function runSync(
           };
 
           const proposals = await classifyDriftViaClaude(shellRun, perPrDrift, treeNodes);
+
+          if (proposals.length === 0) {
+            console.log(
+              `  \u26A0 ${prLabel}: Claude returned empty response — no classification. This PR will be skipped.`,
+            );
+            return { pr, filtered: [] as ClassificationItem[], written: [] as string[] };
+          }
+
           const filtered = proposals.filter((p) => p.type !== "TREE_OK");
           const okCount = proposals.length - filtered.length;
 
@@ -1196,7 +1200,12 @@ export async function runSync(
     );
 
     // Phase 2: Apply sequentially (git operations can't be parallel)
+    // Each PR needs its own branch/commit/push cycle — this is inherently serial.
     if (flags.apply) {
+      const applyCount = classifiedPrs.filter((c) => c.filtered.length > 0).length;
+      console.log(
+        `\nApplying ${applyCount} tree PR(s) sequentially (git push per PR, ~8s each)...`,
+      );
       for (const { pr, filtered, written } of classifiedPrs) {
         if (filtered.length === 0) continue;
         const group: ProposalGroup = {
