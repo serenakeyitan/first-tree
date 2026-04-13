@@ -582,20 +582,31 @@ For TREE_OK items, only path, type, and rationale are required (other fields can
 
 Return a JSON array only, no prose.`;
   const CLAUDE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes per classification
-  const result = await shellRun("claude", [
-    "-p",
-    "--output-format",
-    "json",
-    prompt,
-  ], { timeout: CLAUDE_TIMEOUT_MS });
-  if (result.code !== 0) {
+  const MAX_RETRIES = 2;
+  let result: ShellResult | null = null;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    result = await shellRun("claude", [
+      "-p",
+      "--output-format",
+      "json",
+      prompt,
+    ], { timeout: CLAUDE_TIMEOUT_MS });
+    if (result.code === 0) break;
+    const isRateLimit = result.stderr.includes("429") || result.stderr.includes("rate") || result.stderr.includes("Too Many");
     const timedOut = result.stderr.includes("ETIMEDOUT") || result.stderr.includes("killed");
     if (timedOut) {
-      console.error(
-        `\u26A0 Claude CLI timed out after 5 minutes. Skipping this PR.`,
-      );
+      console.error(`\u26A0 Claude CLI timed out after 5 minutes. Skipping this PR.`);
       return [];
     }
+    if (isRateLimit && attempt < MAX_RETRIES) {
+      const waitSec = (attempt + 1) * 15;
+      console.log(`  \u26A0 Rate limited (429). Retrying in ${waitSec}s... (attempt ${attempt + 2}/${MAX_RETRIES + 1})`);
+      await new Promise((resolve) => setTimeout(resolve, waitSec * 1000));
+      continue;
+    }
+    break;
+  }
+  if (!result || result.code !== 0) {
     console.error(
       "\u274C The `claude` CLI is required for drift classification but was not found on PATH.\n\n" +
       "Install it:\n" +
@@ -1147,7 +1158,7 @@ export async function runSync(
     return hasConfigErrors ? 1 : 0;
   }
 
-  const CONCURRENCY = 5;
+  const CONCURRENCY = 10;
 
   for (const drift of driftReports) {
     // Classify per merged PR (not per batch) so each source PR → one tree PR
