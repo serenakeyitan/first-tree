@@ -1121,64 +1121,84 @@ export async function runSync(
     return hasConfigErrors ? 1 : 0;
   }
 
+  const CONCURRENCY = 5;
+
   for (const drift of driftReports) {
     // Classify per merged PR (not per batch) so each source PR → one tree PR
     const prsToClassify = drift.mergedPrs.length > 0
       ? drift.mergedPrs
       : [{ number: 0, title: "unlinked commits", mergeCommitSha: null }];
 
-    let totalProposals = 0;
+    // Phase 1: Classify all PRs in parallel (up to CONCURRENCY at a time)
+    interface ClassifiedPr {
+      pr: typeof prsToClassify[0];
+      filtered: ClassificationItem[];
+      written: string[];
+    }
+    const classifiedPrs: ClassifiedPr[] = [];
 
-    for (const pr of prsToClassify) {
-      const prLabel = pr.number > 0
-        ? `PR #${pr.number} (${pr.title})`
-        : "unlinked commits";
-      console.log(
-        `\nClassifying ${drift.binding.sourceId} / ${prLabel}...`,
+    console.log(
+      `\nClassifying ${prsToClassify.length} source PR(s) for ${drift.binding.sourceId} (concurrency: ${CONCURRENCY})...`,
+    );
+
+    for (let i = 0; i < prsToClassify.length; i += CONCURRENCY) {
+      const batch = prsToClassify.slice(i, i + CONCURRENCY);
+      const results = await Promise.all(
+        batch.map(async (pr) => {
+          const prLabel = pr.number > 0
+            ? `PR #${pr.number} (${pr.title})`
+            : "unlinked commits";
+
+          // Build a per-PR drift report with only this PR's commits
+          const prCommits = pr.number > 0
+            ? drift.commits.filter((c) => {
+                if (pr.mergeCommitSha && c.sha === pr.mergeCommitSha) return true;
+                if (c.message.includes(`#${pr.number}`)) return true;
+                return false;
+              })
+            : drift.commits;
+
+          const perPrDrift: DriftReport = {
+            ...drift,
+            commits: prCommits.length > 0 ? prCommits : drift.commits.slice(0, 20),
+            mergedPrTitles: [pr.title],
+          };
+
+          const proposals = await classifyDriftViaClaude(shellRun, perPrDrift, treeNodes);
+          const filtered = proposals.filter((p) => p.type !== "TREE_OK");
+          const okCount = proposals.length - filtered.length;
+
+          console.log(
+            `  ${prLabel}: ${filtered.length} proposals (${okCount} TREE_OK skipped)`,
+          );
+
+          if (proposals.length > 0 && filtered.length === 0) {
+            for (const p of proposals.slice(0, 3)) {
+              console.log(`    - ${p.path ?? p.suggested_node_title ?? "(unnamed)"}: ${p.rationale ?? "(no rationale)"}`);
+            }
+          }
+
+          const written: string[] = [];
+          for (const item of filtered) {
+            const path = writeProposalFile(repo.root, drift.binding.sourceId, drift, item);
+            written.push(path);
+          }
+
+          return { pr, filtered, written };
+        }),
       );
+      classifiedPrs.push(...results);
+    }
 
-      // Build a per-PR drift report with only this PR's commits
-      const prCommits = pr.number > 0
-        ? drift.commits.filter((c) => {
-            // Match commits by merge commit SHA or by date proximity to the PR
-            if (pr.mergeCommitSha && c.sha === pr.mergeCommitSha) return true;
-            // Heuristic: commits whose message mentions the PR number
-            if (c.message.includes(`#${pr.number}`)) return true;
-            return false;
-          })
-        : drift.commits; // unlinked = all commits (fallback)
+    const totalProposals = classifiedPrs.reduce((sum, c) => sum + c.filtered.length, 0);
+    console.log(
+      `\u2713 ${drift.binding.sourceId}: ${totalProposals} total proposal(s) across ${prsToClassify.length} source PR(s)`,
+    );
 
-      const perPrDrift: DriftReport = {
-        ...drift,
-        commits: prCommits.length > 0 ? prCommits : drift.commits.slice(0, 20),
-        mergedPrTitles: [pr.title],
-      };
-
-      const proposals = await classifyDriftViaClaude(shellRun, perPrDrift, treeNodes);
-      const filtered = proposals.filter((p) => p.type !== "TREE_OK");
-      const okCount = proposals.length - filtered.length;
-
-      console.log(
-        `  ${filtered.length} proposals (${okCount} TREE_OK skipped)`,
-      );
-
-      if (proposals.length > 0 && filtered.length === 0) {
-        console.log("  Rationales:");
-        for (const p of proposals.slice(0, 5)) {
-          console.log(`    - ${p.path ?? p.suggested_node_title ?? "(unnamed)"}: ${p.rationale ?? "(no rationale)"}`);
-        }
-      }
-
-      if (filtered.length === 0) continue;
-      totalProposals += filtered.length;
-
-      const written: string[] = [];
-      for (const item of filtered) {
-        const path = writeProposalFile(repo.root, drift.binding.sourceId, drift, item);
-        written.push(path);
-      }
-
-      if (flags.apply) {
+    // Phase 2: Apply sequentially (git operations can't be parallel)
+    if (flags.apply) {
+      for (const { pr, filtered, written } of classifiedPrs) {
+        if (filtered.length === 0) continue;
         const group: ProposalGroup = {
           sourcePrNumber: pr.number > 0 ? pr.number : null,
           sourcePrTitle: pr.number > 0 ? pr.title : null,
@@ -1195,17 +1215,8 @@ export async function runSync(
           now,
         );
         if (!ok) return 1;
-        // Return to the default branch before creating the next branch
         await shellRun("git", ["checkout", "-"], { cwd: repo.root });
       }
-    }
-
-    console.log(
-      `\u2713 ${drift.binding.sourceId}: ${totalProposals} total proposal(s) across ${prsToClassify.length} source PR(s)`,
-    );
-
-    if (!flags.apply) {
-      // On propose-only, do NOT pin — pin only after apply succeeds
     }
   }
 
