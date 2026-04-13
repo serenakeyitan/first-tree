@@ -471,6 +471,10 @@ describe("sync -- PR labeling", () => {
         return { stdout: classifyResponse, stderr: "", code: 0 };
       }
       if (command === "git") {
+        // diff --cached --quiet: exit 1 = has staged changes (simulate successful staging)
+        if (args.includes("diff") && args.includes("--cached") && args.includes("--quiet")) {
+          return { stdout: "", stderr: "", code: 1 };
+        }
         return { stdout: "", stderr: "", code: 0 };
       }
       if (command === "gh" && args[0] === "pr" && args[1] === "create") {

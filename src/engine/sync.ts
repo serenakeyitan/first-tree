@@ -825,15 +825,17 @@ async function applyProposalGroup(
   }
 
   // Write nodes directly to real tree paths (not drift/)
+  const writtenFiles: string[] = [];
   for (const proposal of group.proposals) {
     if (proposal.type === "TREE_OK") continue;
     if (proposal.type === "TREE_MISS") {
-      const dirSegment = proposal.path === "(root)" ? "misc" : proposal.path;
+      let dirSegment = proposal.path === "(root)" ? "misc" : proposal.path;
+      // Strip trailing /NODE.md if the AI included it in the path
+      dirSegment = dirSegment.replace(/\/NODE\.md$/i, "").replace(/^NODE\.md$/i, "misc");
       const absDir = join(treeRoot, dirSegment);
       mkdirSync(absDir, { recursive: true });
       const owners = [...new Set(extractOwnersFromCodeowners(treeRoot, dirSegment))];
       const title = proposal.suggested_node_title;
-      // Capitalize first letter of title
       const capitalizedTitle = title.charAt(0).toUpperCase() + title.slice(1);
       const body = proposal.suggested_node_body_markdown;
       const nodePath = join(absDir, "NODE.md");
@@ -849,18 +851,28 @@ async function applyProposalGroup(
           "",
         ].join("\n");
         writeFileSync(nodePath, content);
+        writtenFiles.push(nodePath);
       }
     }
   }
 
-  // NOTE: Neither CODEOWNERS nor the binding pin are updated per-PR.
-  // Both are handled in the housekeeping PR after all sync PRs merge,
-  // to avoid cascade merge conflicts.
+  if (writtenFiles.length === 0) {
+    console.log(`  \u23ED No new files to commit for this PR — skipping.`);
+    return true;
+  }
 
-  const addResult = await shellRun("git", ["add", "-A"], { cwd: treeRoot });
-  if (addResult.code !== 0) {
-    console.error(`\u274C git add failed: ${addResult.stderr.trim()}`);
-    return false;
+  // NOTE: Only stage the specific NODE.md files this PR created.
+  // Do NOT use git add -A — that would pick up proposals, binding, CODEOWNERS
+  // from other operations and create a mega-PR.
+  for (const file of writtenFiles) {
+    await shellRun("git", ["add", file], { cwd: treeRoot });
+  }
+  // Check if there's anything staged (diff --cached --quiet exits 0 = nothing, 1 = has changes)
+  const stagingCheck = await shellRun("git", ["diff", "--cached", "--quiet"], { cwd: treeRoot });
+  if (stagingCheck.code === 0) {
+    // Nothing staged — files already existed or were already committed
+    console.log(`  \u23ED Nothing new to commit for this PR — skipping.`);
+    return true;
   }
   const commitMessage = group.sourcePrNumber !== null
     ? `chore(sync): ${binding.sourceId} PR#${group.sourcePrNumber} to ${shortSha}`
