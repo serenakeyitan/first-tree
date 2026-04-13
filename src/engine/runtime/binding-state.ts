@@ -22,10 +22,12 @@ export type SourceBindingMode =
 export type RootKind = "git-repo" | "folder";
 export type SourceScope = "repo" | "workspace";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 export interface BoundTreeReference {
   entrypoint: string;
+  lastReconciledAt?: string;
+  lastReconciledSourceCommit?: string;
   localPath?: string;
   remoteUrl?: string;
   treeId: string;
@@ -74,6 +76,8 @@ export interface TreeState {
 export interface TreeBindingState {
   bindingMode: SourceBindingMode;
   entrypoint: string;
+  lastReconciledAt?: string;
+  lastReconciledSourceCommit?: string;
   remoteUrl?: string;
   rootKind: RootKind;
   schemaVersion: number;
@@ -81,7 +85,6 @@ export interface TreeBindingState {
   sourceId: string;
   sourceName: string;
   sourceRootPath: string;
-  submodulePath?: string;
   treeMode: TreeMode;
   treeRepoName: string;
   workspaceId?: string;
@@ -123,8 +126,26 @@ function parseTreeReference(value: unknown): BoundTreeReference | null {
   if (value.remoteUrl !== undefined && typeof value.remoteUrl !== "string") {
     return null;
   }
+  if (
+    value.lastReconciledSourceCommit !== undefined
+    && typeof value.lastReconciledSourceCommit !== "string"
+  ) {
+    return null;
+  }
+  if (
+    value.lastReconciledAt !== undefined
+    && typeof value.lastReconciledAt !== "string"
+  ) {
+    return null;
+  }
   return {
     entrypoint: value.entrypoint,
+    lastReconciledAt:
+      typeof value.lastReconciledAt === "string" ? value.lastReconciledAt : undefined,
+    lastReconciledSourceCommit:
+      typeof value.lastReconciledSourceCommit === "string"
+        ? value.lastReconciledSourceCommit
+        : undefined,
     localPath: value.localPath,
     remoteUrl: value.remoteUrl,
     treeId: value.treeId,
@@ -347,9 +368,6 @@ export function readTreeBinding(
   if (parsed.remoteUrl !== undefined && typeof parsed.remoteUrl !== "string") {
     return null;
   }
-  if (parsed.submodulePath !== undefined && typeof parsed.submodulePath !== "string") {
-    return null;
-  }
   if (parsed.workspaceId !== undefined && typeof parsed.workspaceId !== "string") {
     return null;
   }
@@ -359,9 +377,27 @@ export function readTreeBinding(
   ) {
     return null;
   }
+  if (
+    parsed.lastReconciledSourceCommit !== undefined
+    && typeof parsed.lastReconciledSourceCommit !== "string"
+  ) {
+    return null;
+  }
+  if (
+    parsed.lastReconciledAt !== undefined
+    && typeof parsed.lastReconciledAt !== "string"
+  ) {
+    return null;
+  }
   return {
     bindingMode: parsed.bindingMode,
     entrypoint: parsed.entrypoint,
+    lastReconciledAt:
+      typeof parsed.lastReconciledAt === "string" ? parsed.lastReconciledAt : undefined,
+    lastReconciledSourceCommit:
+      typeof parsed.lastReconciledSourceCommit === "string"
+        ? parsed.lastReconciledSourceCommit
+        : undefined,
     remoteUrl: parsed.remoteUrl,
     rootKind: parsed.rootKind,
     schemaVersion:
@@ -370,7 +406,6 @@ export function readTreeBinding(
     sourceId: parsed.sourceId,
     sourceName: parsed.sourceName,
     sourceRootPath: parsed.sourceRootPath,
-    submodulePath: parsed.submodulePath,
     treeMode: parsed.treeMode,
     treeRepoName: parsed.treeRepoName,
     workspaceId: parsed.workspaceId,

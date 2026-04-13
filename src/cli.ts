@@ -16,8 +16,11 @@ Commands:
   publish               Publish a tree repo to GitHub
   verify                Run verification checks against a tree repo
   upgrade               Refresh the installed skill in a tree repo
+  sync                  Detect drift between a tree repo and its bound sources
   review                Run Claude Code PR review (CI helper)
   generate-codeowners   Generate .github/CODEOWNERS from tree ownership
+  invite                Invite a new member to the Context Tree
+  join                  Accept an invite and join a Context Tree
   inject-context        Output Claude Code SessionStart hook payload from NODE.md
   help                  Show help for a topic (e.g. \`help onboarding\`)
 
@@ -165,6 +168,10 @@ export async function runCli(
       const { runUpgrade } = await import("#engine/commands/upgrade.js");
       return runUpgrade(args.slice(1));
     }
+    case "sync": {
+      const { runSync } = await import("#engine/commands/sync.js");
+      return runSync(args.slice(1));
+    }
     case "review": {
       const { runReview } = await import("#engine/commands/review.js");
       return runReview(args.slice(1));
@@ -180,6 +187,14 @@ export async function runCli(
         "#engine/commands/inject-context.js"
       );
       return runInjectContext(args.slice(1));
+    }
+    case "invite": {
+      const { runInvite } = await import("#engine/commands/invite.js");
+      return runInvite(args.slice(1));
+    }
+    case "join": {
+      const { runJoin } = await import("#engine/commands/join.js");
+      return runJoin(args.slice(1));
     }
     case "help":
       return (await import("#engine/commands/help.js")).runHelp(

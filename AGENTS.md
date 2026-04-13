@@ -66,7 +66,7 @@ npx tsx evals/scripts/run-eval.ts --trials 3 --cases pydantic-importstring-error
 
 <!-- BEGIN FIRST-TREE-SOURCE-INTEGRATION -->
 FIRST-TREE-SOURCE-INTEGRATION: workspace member bound to shared tree repo `first-tree-context`
-FIRST-TREE-TREE-REPO: `ADHD-tree`
+FIRST-TREE-TREE-REPO: `first-tree-context`
 FIRST-TREE-TREE-MODE: `shared`
 FIRST-TREE-BINDING-MODE: `workspace-member`
 FIRST-TREE-TREE-REPO-URL: `https://github.com/agent-team-foundation/first-tree-context`
