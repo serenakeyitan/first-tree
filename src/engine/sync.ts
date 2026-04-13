@@ -742,7 +742,7 @@ function extractOwnersFromCodeowners(
         pattern === "*"
         || targetPath.startsWith(pattern.replace(/^\//, "").replace(/\/$/, ""))
       ) {
-        matches.push(...parts.slice(1));
+        matches.push(...parts.slice(1).map(s => s.replace(/^@+/, '')));
       }
     }
     if (matches.length > 0) return matches;
