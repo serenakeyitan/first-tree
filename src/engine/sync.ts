@@ -512,7 +512,35 @@ async function classifyDriftViaClaude(
     ...drift.commits.map((c) => `commit ${c.shortSha} [${c.topDir}] ${c.message}`),
     ...drift.mergedPrTitles.map((title) => `pr ${title}`),
   ].join("\n");
-  const prompt = `You are classifying source-repo changes against a Context Tree. Here is the tree structure (list of NODE.md paths + titles + owners):\n${treeSummary}\nHere are the source commits and merged PR titles:\n${driftSummary}\nFor each drift item, output JSON: {path, type: 'TREE_MISS'|'TREE_STALE'|'TREE_OK', target_node_path (or null for TREE_MISS), rationale (one sentence), suggested_node_title, suggested_node_body_markdown}. Return a JSON array only, no prose.`;
+  const prompt = `You are a Context Tree maintenance agent. A Context Tree is a structured knowledge base (markdown NODE.md files) that captures product decisions, architecture, conventions, and domain knowledge for a codebase.
+
+Your job: given the tree's current nodes and a batch of recent source-repo changes, determine what the tree is MISSING or what is STALE.
+
+IMPORTANT: Do NOT classify individual commits. Instead, look at the OVERALL picture of what changed in the source and compare it against what the tree currently covers. Ask yourself:
+- Are there new features, modules, or architectural patterns that the tree has no node for? → TREE_MISS
+- Are there changes that contradict or supersede an existing tree node's content? → TREE_STALE
+- Is the tree already adequate for this area? → TREE_OK
+
+Bias toward TREE_MISS. A Context Tree that is too sparse is worse than one that is too detailed. If in doubt, classify as TREE_MISS.
+
+## Current tree nodes
+${treeSummary}
+
+## Recent source changes (commits and merged PRs)
+${driftSummary}
+
+## Output format
+Return a JSON array. Each element represents one area that needs a tree update (NOT one per commit — group related changes):
+{
+  "path": "suggested/node/path",
+  "type": "TREE_MISS" | "TREE_STALE" | "TREE_OK",
+  "target_node_path": "existing/node/path or null for TREE_MISS",
+  "rationale": "one sentence explaining why",
+  "suggested_node_title": "Human-readable title for the node",
+  "suggested_node_body_markdown": "Draft NODE.md body content (2-5 paragraphs)"
+}
+
+Return a JSON array only, no prose.`;
   const result = await shellRun("claude", [
     "-p",
     "--output-format",
@@ -1104,7 +1132,28 @@ export async function runSync(
   }
 
   for (const drift of driftReports) {
+    console.log(
+      `\nClassifying drift for ${drift.binding.sourceId} (${drift.commits.length} commits, ${drift.mergedPrTitles.length} merged PRs)...`,
+    );
     const proposals = await classifyDriftViaClaude(shellRun, drift, treeNodes);
+    const okCount = proposals.filter((p) => p.type === "TREE_OK").length;
+    const missCount = proposals.filter((p) => p.type === "TREE_MISS").length;
+    const staleCount = proposals.filter((p) => p.type === "TREE_STALE").length;
+    console.log(
+      `  Classification: ${proposals.length} items — ${missCount} TREE_MISS, ${staleCount} TREE_STALE, ${okCount} TREE_OK`,
+    );
+    if (proposals.length > 0 && missCount === 0 && staleCount === 0) {
+      console.log(
+        "  \u26A0 All items classified as TREE_OK — no proposals will be written.",
+      );
+      console.log("  Rationales from AI:");
+      for (const p of proposals.slice(0, 10)) {
+        console.log(`    - ${p.path ?? p.suggested_node_title ?? "(unnamed)"}: ${p.rationale ?? "(no rationale)"}`);
+      }
+      if (proposals.length > 10) {
+        console.log(`    ... and ${proposals.length - 10} more`);
+      }
+    }
     const filtered = proposals.filter((p) => p.type !== "TREE_OK");
     const written: string[] = [];
     for (const item of filtered) {
@@ -1112,7 +1161,7 @@ export async function runSync(
       written.push(path);
     }
     console.log(
-      `\u2713 ${drift.binding.sourceId}: wrote ${written.length} proposal(s) under .first-tree/proposals/${drift.binding.sourceId}/`,
+      `\u2713 ${drift.binding.sourceId}: wrote ${written.length} proposal(s)${written.length > 0 ? ` under .first-tree/proposals/${drift.binding.sourceId}/` : ""}`,
     );
 
     if (flags.apply) {
