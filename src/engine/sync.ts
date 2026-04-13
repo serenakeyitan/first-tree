@@ -217,6 +217,7 @@ interface CommitSummary {
 interface MergedPr {
   number: number;
   title: string;
+  author: string;
   mergedAt: string;
   mergeCommitSha: string | null;
 }
@@ -234,7 +235,7 @@ interface DriftReport {
 
 interface ClassificationItem {
   path: string;
-  type: "TREE_MISS" | "TREE_OK";
+  type: "TREE_MISS" | "TREE_SUPPLEMENT" | "TREE_OK";
   target_node_path: string | null;
   rationale: string;
   suggested_node_title: string;
@@ -245,6 +246,7 @@ interface ClassificationItem {
 interface ProposalGroup {
   sourcePrNumber: number | null;
   sourcePrTitle: string | null;
+  sourcePrAuthor: string | null;
   proposals: ClassificationItem[];
   proposalPaths: string[];
 }
@@ -484,6 +486,7 @@ async function fetchMergedPrs(
       items?: Array<{
         number?: number;
         title?: string;
+        user?: { login?: string };
         pull_request?: { merged_at?: string; merge_commit_sha?: string };
       }>;
     };
@@ -492,6 +495,7 @@ async function fetchMergedPrs(
       .map((item) => ({
         number: item.number!,
         title: item.title!,
+        author: item.user?.login ?? "unknown",
         mergedAt: item.pull_request?.merged_at ?? "",
         mergeCommitSha: item.pull_request?.merge_commit_sha ?? null,
       }));
@@ -549,17 +553,18 @@ async function classifyDriftViaClaude(
   const relatedCount = relatedNodes.length;
   const prompt = `You are a Context Tree maintenance agent. A Context Tree is a structured knowledge base (markdown NODE.md files) that captures product decisions, architecture, conventions, and domain knowledge for a codebase.
 
-Your job: given the tree's current nodes and a recently merged PR, determine whether the tree is MISSING knowledge that this PR introduced.
+Your job: given the tree's current nodes and a recently merged PR, classify the change into one of three categories.
 
-Context: this PR has already been reviewed and approved (including context-fit review by gardener). It does not conflict with the tree. The only question is: did it introduce NEW knowledge that the tree doesn't yet capture?
+Context: this PR has already been reviewed and approved. It does not conflict with the tree.
 
-IMPORTANT: For nodes marked with CONTENT below, read the content carefully. A node might exist for an area but NOT cover the specific feature this PR added. For example, if an "Authentication" node only mentions JWT but the PR adds OAuth support, that is a TREE_MISS — the tree needs a new node (or the existing node needs supplementing, which counts as TREE_MISS for sync purposes).
+IMPORTANT: For nodes marked with CONTENT below, read the content carefully.
 
-Ask yourself:
-- Did this PR add a new feature, module, convention, or architectural pattern that NO existing node covers in its content? → TREE_MISS
-- Do the existing nodes (including their content) already adequately describe what this PR introduced? → TREE_OK
+Classify as one of:
+- **TREE_MISS**: This PR introduced a completely new feature, module, or domain that NO existing node covers. A new node is needed.
+- **TREE_SUPPLEMENT**: This PR adds new information to an area the tree already has a node for, but that node doesn't cover this specific change. The existing node needs supplementing. For example: auth node only mentions JWT, PR adds OAuth → TREE_SUPPLEMENT targeting the auth node.
+- **TREE_OK**: The existing nodes already adequately cover what this PR introduced. No tree changes needed.
 
-Bias toward TREE_MISS. If in doubt, classify as TREE_MISS.
+Bias toward TREE_MISS and TREE_SUPPLEMENT over TREE_OK. If in doubt, it's better to flag it.
 
 ## Current tree nodes (${treeNodes.length} total, ${relatedCount} with content shown)
 ${treeSummary}
@@ -568,17 +573,15 @@ ${treeSummary}
 ${driftSummary}
 
 ## Output format
-Return a JSON array. Each element represents one area that needs a NEW tree node (NOT one per commit — group related changes):
+Return a JSON array. Each element:
 {
   "path": "suggested/node/path",
-  "type": "TREE_MISS" | "TREE_OK",
-  "target_node_path": null,
-  "rationale": "one sentence explaining why the tree needs this node",
-  "suggested_node_title": "Human-readable title for the node",
-  "suggested_node_body_markdown": "Draft NODE.md body content (2-5 paragraphs)"
+  "type": "TREE_MISS" | "TREE_SUPPLEMENT" | "TREE_OK",
+  "target_node_path": "path/to/existing/NODE.md (for TREE_SUPPLEMENT) or null (for TREE_MISS/TREE_OK)",
+  "rationale": "one sentence explaining why",
+  "suggested_node_title": "title for new node (TREE_MISS) or empty string",
+  "suggested_node_body_markdown": "draft content for new node (TREE_MISS) or suggested additions for existing node (TREE_SUPPLEMENT) or empty string (TREE_OK)"
 }
-
-For TREE_OK items, only path, type, and rationale are required (other fields can be empty strings).
 
 Return a JSON array only, no prose.`;
   const CLAUDE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes per classification
@@ -824,17 +827,20 @@ async function applyProposalGroup(
     return false;
   }
 
-  // Write nodes directly to real tree paths (not drift/)
+  // Write nodes directly to real tree paths
   const writtenFiles: string[] = [];
+  const prAuthor = (group.sourcePrAuthor ?? "").replace(/^@+/, "");
+
   for (const proposal of group.proposals) {
-    if (proposal.type === "TREE_OK") continue;
+    if (proposal.type === "TREE_OK" || proposal.type === "TREE_SUPPLEMENT") continue;
     if (proposal.type === "TREE_MISS") {
       let dirSegment = proposal.path === "(root)" ? "misc" : proposal.path;
       // Strip trailing /NODE.md if the AI included it in the path
       dirSegment = dirSegment.replace(/\/NODE\.md$/i, "").replace(/^NODE\.md$/i, "misc");
       const absDir = join(treeRoot, dirSegment);
       mkdirSync(absDir, { recursive: true });
-      const owners = [...new Set(extractOwnersFromCodeowners(treeRoot, dirSegment))];
+      // Owner = PR author (the person who introduced this new area)
+      const owner = prAuthor || "unknown";
       const title = proposal.suggested_node_title;
       const capitalizedTitle = title.charAt(0).toUpperCase() + title.slice(1);
       const body = proposal.suggested_node_body_markdown;
@@ -844,7 +850,7 @@ async function applyProposalGroup(
         const content = [
           "---",
           `title: "${capitalizedTitle.replace(/"/g, '\\"')}"`,
-          `owners: [${owners.join(", ")}]`,
+          `owners: [${owner}]`,
           "---",
           "",
           body,
@@ -852,13 +858,50 @@ async function applyProposalGroup(
         ].join("\n");
         writeFileSync(nodePath, content);
         writtenFiles.push(nodePath);
+
+        // Auto-create member if PR author isn't in members/ yet
+        if (owner && owner !== "unknown") {
+          const memberDir = join(treeRoot, "members", owner);
+          const memberNode = join(memberDir, "NODE.md");
+          if (!existsSync(memberNode)) {
+            mkdirSync(memberDir, { recursive: true });
+            writeFileSync(
+              memberNode,
+              [
+                "---",
+                `title: "${owner}"`,
+                `owners: [${owner}]`,
+                `type: "human"`,
+                `role: "Contributor"`,
+                `domains:`,
+                `  - "${dirSegment.split("/")[0]}"`,
+                "---",
+                "",
+                `Auto-created by first-tree sync from source PR #${group.sourcePrNumber ?? "unknown"}.`,
+                "",
+              ].join("\n"),
+            );
+            writtenFiles.push(memberNode);
+            console.log(`  \u2713 Auto-created member: members/${owner}/NODE.md`);
+          }
+        }
       }
     }
   }
 
-  if (writtenFiles.length === 0) {
-    console.log(`  \u23ED No new files to commit for this PR — skipping.`);
+  // Check if there are TREE_SUPPLEMENT items (no files, but note in PR body)
+  const hasSupplements = group.proposals.some((p) => p.type === "TREE_SUPPLEMENT");
+  const hasMissFiles = writtenFiles.length > 0;
+
+  if (!hasMissFiles && !hasSupplements) {
+    console.log(`  \u23ED No new files or supplements for this PR — skipping.`);
     return true;
+  }
+
+  if (!hasMissFiles && hasSupplements) {
+    // TREE_SUPPLEMENT only — no files to commit, but we still open a PR
+    // with the suggestions in the body. Skip file staging.
+    console.log(`  \u2139 TREE_SUPPLEMENT only — suggestions will be in PR body.`);
   }
 
   // NOTE: Only stage the specific NODE.md files this PR created.
@@ -900,16 +943,37 @@ async function applyProposalGroup(
     return false;
   }
 
+  const supplements = group.proposals.filter((p) => p.type === "TREE_SUPPLEMENT");
+  const misses = group.proposals.filter((p) => p.type === "TREE_MISS");
   const bodyLines = [
     `Automated drift sync for source \`${binding.sourceId}\`.`,
     "",
     `- Source range: ${drift.fromSha ? drift.fromSha.slice(0, 7) : "first-run"}..${shortSha}`,
-    `- Proposal files: ${group.proposalPaths.length}`,
+    `- New nodes: ${misses.length}`,
+    `- Supplement suggestions: ${supplements.length}`,
     "",
-    "Proposals:",
-    ...group.proposals.map(
-      (p) => `- ${p.type}: ${p.target_node_path ?? p.path} \u2014 ${p.rationale}`,
-    ),
+    ...(misses.length > 0 ? [
+      "**New nodes (TREE_MISS):**",
+      ...misses.map((p) => `- \`${p.path}\` — ${p.rationale}`),
+      "",
+    ] : []),
+    ...(supplements.length > 0 ? [
+      "**Suggested supplements (TREE_SUPPLEMENT):**",
+      "",
+      "The following existing nodes should be updated to cover new information from this PR:",
+      "",
+      ...supplements.map((p) => [
+        `<details>`,
+        `<summary><code>${p.target_node_path}</code> — ${p.rationale}</summary>`,
+        "",
+        "Suggested additions:",
+        "",
+        p.suggested_node_body_markdown,
+        "",
+        `</details>`,
+        "",
+      ]).flat(),
+    ] : []),
     "",
     "Commits:",
     ...drift.commits.map(
@@ -1133,7 +1197,7 @@ export async function runSync(
     // Classify per merged PR (not per batch) so each source PR → one tree PR
     const prsToClassify = drift.mergedPrs.length > 0
       ? drift.mergedPrs
-      : [{ number: 0, title: "unlinked commits", mergeCommitSha: null }];
+      : [{ number: 0, title: "unlinked commits", author: "unknown", mergeCommitSha: null }];
 
     // Phase 1: Classify all PRs in parallel (up to CONCURRENCY at a time)
     interface ClassifiedPr {
@@ -1221,6 +1285,7 @@ export async function runSync(
         const group: ProposalGroup = {
           sourcePrNumber: pr.number > 0 ? pr.number : null,
           sourcePrTitle: pr.number > 0 ? pr.title : null,
+          sourcePrAuthor: pr.number > 0 ? pr.author : null,
           proposals: filtered,
           proposalPaths: written,
         };
