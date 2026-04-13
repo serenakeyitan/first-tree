@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import {
   buildDefaultTreeRepoName,
@@ -70,6 +70,49 @@ Options:
   --tree-path PATH   Upgrade a tree repo from another working directory
   --help             Show this help message
 `;
+
+const SYNC_RUNBOOKS = [
+  { rel: "first-tree-sync.md", label: "sync runbook" },
+  { rel: "first-tree-sync-schedule.md", label: "sync schedule runbook" },
+  { rel: "first-tree-sync-start.md", label: "sync start command" },
+  { rel: "first-tree-sync-stop.md", label: "sync stop command" },
+  { rel: "first-tree-sync-loop.md", label: "sync loop command" },
+];
+
+export function ensureSyncRunbook(
+  treeRoot: string,
+  sourceRoot: string,
+): "created" | "unchanged" | "missing-source" {
+  let result: "created" | "unchanged" | "missing-source" = "unchanged";
+
+  for (const { rel, label } of SYNC_RUNBOOKS) {
+    const targetPath = join(treeRoot, ".claude", "commands", rel);
+    if (existsSync(targetPath)) continue;
+
+    const sourcePath = join(sourceRoot, "assets", "framework", "claude-commands", rel);
+    if (!existsSync(sourcePath)) {
+      if (result === "unchanged") result = "missing-source";
+      continue;
+    }
+    mkdirSync(dirname(targetPath), { recursive: true });
+    copyFileSync(sourcePath, targetPath);
+    console.log(`Installed ${label} at \`.claude/commands/${rel}\`.`);
+    result = "created";
+  }
+
+  // Check for gardener
+  const gardenerInstalled = existsSync(join(treeRoot, ".claude", "commands", "gardener-manual.md"));
+  if (!gardenerInstalled) {
+    console.log(
+      "\n\u26A0\uFE0F  repo-gardener is required for sync to review tree-update PRs before merge.\n" +
+      "   Install it by running this in Claude Code:\n\n" +
+      '   Fetch the latest release of repo-gardener and execute its onboarding script: https://github.com/agent-team-foundation/repo-gardener/releases/latest\n\n' +
+      "   After installing gardener, run `first-tree upgrade` again.\n",
+    );
+  }
+
+  return result;
+}
 
 function writeProgress(repo: Repo, content: string): void {
   const progressPath = join(repo.root, repo.preferredProgressPath());
@@ -159,6 +202,9 @@ function formatUpgradeTaskList(
       "## Tree Metadata",
       `- [ ] Confirm the tree-repo skill at ${installedSkillRootsDisplay()} still resolves correctly after the refresh`,
       "- [ ] Replace any stale `context-tree` CLI command references in repo-specific docs, scripts, workflows, or agent config with `first-tree`",
+      "",
+      "## Sync",
+      "- [ ] Review .claude/commands/first-tree-sync.md and set up scheduling via /schedule or cron",
       "",
     );
   } else {
@@ -460,6 +506,7 @@ export function runUpgrade(repo?: Repo, options?: UpgradeOptions): number {
       && compareSkillVersions(installedTreeSkillVersion, packagedVersion) === 0;
 
     if (treeMetadataUpToDate && treeSkillUpToDate) {
+      ensureSyncRunbook(workingRepo.root, sourceRoot);
       console.log(
         `Already up to date with the bundled tree metadata and installed tree skill (${workingRepo.frameworkVersionPath()} = ${localVersion}).`,
       );
@@ -475,6 +522,7 @@ export function runUpgrade(repo?: Repo, options?: UpgradeOptions): number {
     if (!treeSkillUpToDate) {
       const wipedPaths = wipeInstalledSkill(workingRepo.root);
       copyCanonicalSkill(sourceRoot, workingRepo.root);
+      ensureSyncRunbook(workingRepo.root, sourceRoot);
       if (wipedPaths.length > 0) {
         console.log(
           `Wiped previous tree skill installation: ${wipedPaths.map((p) => `\`${p}/\``).join(", ")}.`,
@@ -483,6 +531,8 @@ export function runUpgrade(repo?: Repo, options?: UpgradeOptions): number {
       console.log(
         `Refreshed tree-repo skill payload at ${installedSkillRootsDisplay()}.`,
       );
+    } else {
+      ensureSyncRunbook(workingRepo.root, sourceRoot);
     }
 
     const output = formatUpgradeTaskList(

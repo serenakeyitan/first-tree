@@ -455,10 +455,13 @@ export function runBind(repo?: Repo, options?: BindOptions): number {
       treeMode,
       treeRepoName: treeResolution.treeRepoName,
     });
+    const sourceRemoteUrl = sourceRepo.isGitRepo()
+      ? readGitRemoteUrl(runner, sourceRepo.root)
+      : null;
     writeTreeBinding(treeResolution.treeRepo.root, sourceId, {
       bindingMode,
       entrypoint,
-      remoteUrl,
+      remoteUrl: sourceRemoteUrl ?? undefined,
       rootKind,
       scope,
       sourceId,
