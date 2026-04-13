@@ -948,6 +948,20 @@ async function applyProposalGroup(
     }
   }
 
+  // Ensure root NODE.md lists drift/ as a domain (verify requires it)
+  if (createdDirs.size > 0) {
+    const rootNodePath = join(treeRoot, "NODE.md");
+    if (existsSync(rootNodePath)) {
+      let rootContent = readFileSync(rootNodePath, "utf-8");
+      if (!rootContent.includes("[drift/](drift/NODE.md)")) {
+        // Append drift domain link before the last line or at the end
+        const driftLink = `- **[drift/](drift/NODE.md)** — Sync proposals pending review.\n`;
+        rootContent = rootContent.trimEnd() + "\n\n" + driftLink;
+        writeFileSync(rootNodePath, rootContent);
+      }
+    }
+  }
+
   // Run generate-codeowners after writing NODE.md files
   await runGenerateCodeownersForTree(treeRoot);
 
