@@ -58,7 +58,7 @@ export interface ShellResult {
 export type ShellRun = (
   command: string,
   args: string[],
-  options?: { cwd?: string; input?: string },
+  options?: { cwd?: string; input?: string; timeout?: number },
 ) => Promise<ShellResult>;
 
 export interface SyncDeps {
@@ -69,13 +69,14 @@ export interface SyncDeps {
 async function defaultShellRun(
   command: string,
   args: string[],
-  options: { cwd?: string; input?: string } = {},
+  options: { cwd?: string; input?: string; timeout?: number } = {},
 ): Promise<ShellResult> {
   try {
     const { stdout, stderr } = await execFileAsync(command, args, {
       cwd: options.cwd,
       encoding: "utf-8",
       maxBuffer: 32 * 1024 * 1024,
+      timeout: options.timeout,
     });
     return { stdout: String(stdout), stderr: String(stderr), code: 0 };
   } catch (err) {
@@ -124,6 +125,7 @@ export interface TreeNodeSummary {
   path: string;
   title: string | undefined;
   owners: string[] | undefined;
+  body: string | undefined;
 }
 
 const SCAN_SKIP_DIRS = new Set([
@@ -184,10 +186,14 @@ export function scanTreeNodes(root: string): TreeNodeSummary[] {
         try {
           const text = readFileSync(full, "utf-8");
           const { title, owners } = parseNodeFrontmatter(text);
+          // Extract body (everything after frontmatter)
+          const bodyMatch = text.match(/^---\s*\n.*?\n---\s*\n?([\s\S]*)/s);
+          const body = bodyMatch ? bodyMatch[1].trim() : undefined;
           results.push({
             path: relative(root, full).split("\\").join("/"),
             title,
             owners,
+            body: body && body.length > 0 ? body : undefined,
           });
         } catch {
           // ignore unreadable files
@@ -504,27 +510,58 @@ async function classifyDriftViaClaude(
   drift: DriftReport,
   treeNodes: TreeNodeSummary[],
 ): Promise<ClassificationItem[]> {
-  const treeSummary = treeNodes
-    .slice(0, 200)
-    .map((n) => `- ${n.path} title=${n.title ?? ""} owners=${(n.owners ?? []).join("|")}`)
-    .join("\n");
+  // Build keywords from the PR for relevance matching
+  const driftText = [
+    ...drift.commits.map((c) => c.message),
+    ...drift.mergedPrTitles,
+  ].join(" ").toLowerCase();
+
+  // Find related nodes by keyword overlap (path segments, title words)
+  const relatedNodes = treeNodes.filter((n) => {
+    const nodeText = [
+      n.path.replace(/\//g, " ").replace(/NODE\.md/g, ""),
+      n.title ?? "",
+    ].join(" ").toLowerCase();
+    const nodeWords = nodeText.split(/\s+/).filter((w) => w.length > 2);
+    return nodeWords.some((word) => driftText.includes(word));
+  });
+
+  // Build tree summary: all nodes get path+title, related nodes also get body
+  const treeLines: string[] = [];
+  for (const n of treeNodes.slice(0, 200)) {
+    const isRelated = relatedNodes.includes(n);
+    const line = `- ${n.path} title="${n.title ?? ""}" owners=${(n.owners ?? []).join("|")}`;
+    if (isRelated && n.body) {
+      // Include body for related nodes (cap at 500 chars to keep prompt reasonable)
+      const bodyPreview = n.body.length > 500 ? n.body.slice(0, 500) + "..." : n.body;
+      treeLines.push(`${line}\n  CONTENT: ${bodyPreview.replace(/\n/g, " ")}`);
+    } else {
+      treeLines.push(line);
+    }
+  }
+  const treeSummary = treeLines.join("\n");
+
   const driftSummary = [
     ...drift.commits.map((c) => `commit ${c.shortSha} [${c.topDir}] ${c.message}`),
     ...drift.mergedPrTitles.map((title) => `pr ${title}`),
   ].join("\n");
+
+  const relatedCount = relatedNodes.length;
   const prompt = `You are a Context Tree maintenance agent. A Context Tree is a structured knowledge base (markdown NODE.md files) that captures product decisions, architecture, conventions, and domain knowledge for a codebase.
 
 Your job: given the tree's current nodes and a recently merged PR, determine whether the tree is MISSING knowledge that this PR introduced.
 
 Context: this PR has already been reviewed and approved (including context-fit review by gardener). It does not conflict with the tree. The only question is: did it introduce NEW knowledge that the tree doesn't yet capture?
 
+IMPORTANT: For nodes marked with CONTENT below, read the content carefully. A node might exist for an area but NOT cover the specific feature this PR added. For example, if an "Authentication" node only mentions JWT but the PR adds OAuth support, that is a TREE_MISS — the tree needs a new node (or the existing node needs supplementing, which counts as TREE_MISS for sync purposes).
+
 Ask yourself:
-- Did this PR add a new feature, module, convention, or architectural pattern that the tree has no node for? → TREE_MISS
-- Is the tree already adequate — the existing nodes cover this area? → TREE_OK
+- Did this PR add a new feature, module, convention, or architectural pattern that NO existing node covers in its content? → TREE_MISS
+- Do the existing nodes (including their content) already adequately describe what this PR introduced? → TREE_OK
 
-Bias toward TREE_MISS. A Context Tree that is too sparse is worse than one that is too detailed. If in doubt, classify as TREE_MISS.
+Bias toward TREE_MISS. If in doubt, classify as TREE_MISS.
 
-## Current tree nodes
+## Current tree nodes (${treeNodes.length} total, ${relatedCount} with content shown)
 ${treeSummary}
 
 ## Merged PR
@@ -544,13 +581,32 @@ Return a JSON array. Each element represents one area that needs a NEW tree node
 For TREE_OK items, only path, type, and rationale are required (other fields can be empty strings).
 
 Return a JSON array only, no prose.`;
-  const result = await shellRun("claude", [
-    "-p",
-    "--output-format",
-    "json",
-    prompt,
-  ]);
-  if (result.code !== 0) {
+  const CLAUDE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes per classification
+  const MAX_RETRIES = 2;
+  let result: ShellResult | null = null;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    result = await shellRun("claude", [
+      "-p",
+      "--output-format",
+      "json",
+      prompt,
+    ], { timeout: CLAUDE_TIMEOUT_MS });
+    if (result.code === 0) break;
+    const isRateLimit = result.stderr.includes("429") || result.stderr.includes("rate") || result.stderr.includes("Too Many");
+    const timedOut = result.stderr.includes("ETIMEDOUT") || result.stderr.includes("killed");
+    if (timedOut) {
+      console.error(`\u26A0 Claude CLI timed out after 5 minutes. Skipping this PR.`);
+      return [];
+    }
+    if (isRateLimit && attempt < MAX_RETRIES) {
+      const waitSec = (attempt + 1) * 15;
+      console.log(`  \u26A0 Rate limited (429). Retrying in ${waitSec}s... (attempt ${attempt + 2}/${MAX_RETRIES + 1})`);
+      await new Promise((resolve) => setTimeout(resolve, waitSec * 1000));
+      continue;
+    }
+    break;
+  }
+  if (!result || result.code !== 0) {
     console.error(
       "\u274C The `claude` CLI is required for drift classification but was not found on PATH.\n\n" +
       "Install it:\n" +
@@ -683,7 +739,7 @@ function extractOwnersFromCodeowners(
         pattern === "*"
         || targetPath.startsWith(pattern.replace(/^\//, "").replace(/\/$/, ""))
       ) {
-        matches.push(...parts.slice(1));
+        matches.push(...parts.slice(1).map(s => s.replace(/^@+/, '')));
       }
     }
     if (matches.length > 0) return matches;
@@ -718,10 +774,6 @@ async function runGenerateCodeownersForTree(treeRoot: string): Promise<void> {
     const message = err instanceof Error ? err.message : "unknown error";
     console.log(`\u26A0 generate-codeowners failed: ${message} (continuing anyway)`);
   }
-}
-
-function gardenerInstalled(treeRoot: string): boolean {
-  return existsSync(join(treeRoot, ".claude", "commands", "gardener-manual.md"));
 }
 
 async function applyProposalGroup(
@@ -772,86 +824,55 @@ async function applyProposalGroup(
     return false;
   }
 
-  // Collect all directories that will contain NODE.md files
-  const createdDirs = new Set<string>();
-
+  // Write nodes directly to real tree paths (not drift/)
+  const writtenFiles: string[] = [];
   for (const proposal of group.proposals) {
     if (proposal.type === "TREE_OK") continue;
     if (proposal.type === "TREE_MISS") {
-      const dirSegment = proposal.path === "(root)" ? "misc" : proposal.path;
-      const relDir = join("drift", binding.sourceId, dirSegment);
-      const absDir = join(treeRoot, relDir);
+      let dirSegment = proposal.path === "(root)" ? "misc" : proposal.path;
+      // Strip trailing /NODE.md if the AI included it in the path
+      dirSegment = dirSegment.replace(/\/NODE\.md$/i, "").replace(/^NODE\.md$/i, "misc");
+      const absDir = join(treeRoot, dirSegment);
       mkdirSync(absDir, { recursive: true });
-      createdDirs.add(relDir);
-      const owners = extractOwnersFromCodeowners(treeRoot, relDir);
+      const owners = [...new Set(extractOwnersFromCodeowners(treeRoot, dirSegment))];
       const title = proposal.suggested_node_title;
+      const capitalizedTitle = title.charAt(0).toUpperCase() + title.slice(1);
       const body = proposal.suggested_node_body_markdown;
-      const content = [
-        "---",
-        `title: "${title.replace(/"/g, '\\"')}"`,
-        `owners: [${owners.join(", ")}]`,
-        "---",
-        "",
-        body,
-        "",
-      ].join("\n");
-      writeFileSync(join(absDir, "NODE.md"), content);
-    }
-  }
-
-  // Ensure every intermediate directory under drift/ has a NODE.md
-  // so that verify doesn't fail on "directory without NODE.md"
-  for (const dir of createdDirs) {
-    const parts = dir.split("/");
-    for (let i = 1; i <= parts.length; i++) {
-      const parentRel = parts.slice(0, i).join("/");
-      const parentNodePath = join(treeRoot, parentRel, "NODE.md");
-      if (!existsSync(parentNodePath)) {
-        mkdirSync(join(treeRoot, parentRel), { recursive: true });
-        const parentTitle = parts[i - 1] ?? "Drift";
-        writeFileSync(
-          parentNodePath,
-          [
-            "---",
-            `title: "${parentTitle}"`,
-            "owners: []",
-            "---",
-            "",
-            `Auto-generated intermediate node for sync proposals.`,
-            "",
-          ].join("\n"),
-        );
+      const nodePath = join(absDir, "NODE.md");
+      // Only write if NODE.md doesn't already exist (don't overwrite human-authored nodes)
+      if (!existsSync(nodePath)) {
+        const content = [
+          "---",
+          `title: "${capitalizedTitle.replace(/"/g, '\\"')}"`,
+          `owners: [${owners.join(", ")}]`,
+          "---",
+          "",
+          body,
+          "",
+        ].join("\n");
+        writeFileSync(nodePath, content);
+        writtenFiles.push(nodePath);
       }
     }
   }
 
-  // Ensure root NODE.md lists drift/ as a domain (verify requires it)
-  if (createdDirs.size > 0) {
-    const rootNodePath = join(treeRoot, "NODE.md");
-    if (existsSync(rootNodePath)) {
-      let rootContent = readFileSync(rootNodePath, "utf-8");
-      if (!rootContent.includes("[drift/](drift/NODE.md)")) {
-        // Append drift domain link before the last line or at the end
-        const driftLink = `- **[drift/](drift/NODE.md)** — Sync proposals pending review.\n`;
-        rootContent = rootContent.trimEnd() + "\n\n" + driftLink;
-        writeFileSync(rootNodePath, rootContent);
-      }
-    }
+  if (writtenFiles.length === 0) {
+    console.log(`  \u23ED No new files to commit for this PR — skipping.`);
+    return true;
   }
 
-  // Run generate-codeowners after writing NODE.md files
-  await runGenerateCodeownersForTree(treeRoot);
-
-  writeTreeBinding(treeRoot, binding.sourceId, {
-    ...binding,
-    lastReconciledSourceCommit: drift.toSha,
-    lastReconciledAt: now().toISOString(),
-  });
-
-  const addResult = await shellRun("git", ["add", "-A"], { cwd: treeRoot });
-  if (addResult.code !== 0) {
-    console.error(`\u274C git add failed: ${addResult.stderr.trim()}`);
-    return false;
+  // NOTE: Only stage the specific NODE.md files this PR created.
+  // Do NOT use git add -A — that would pick up proposals, binding, CODEOWNERS
+  // from other operations and create a mega-PR.
+  for (const file of writtenFiles) {
+    await shellRun("git", ["add", file], { cwd: treeRoot });
+  }
+  // Check if there's anything staged (diff --cached --quiet exits 0 = nothing, 1 = has changes)
+  const stagingCheck = await shellRun("git", ["diff", "--cached", "--quiet"], { cwd: treeRoot });
+  if (stagingCheck.code === 0) {
+    // Nothing staged — files already existed or were already committed
+    console.log(`  \u23ED Nothing new to commit for this PR — skipping.`);
+    return true;
   }
   const commitMessage = group.sourcePrNumber !== null
     ? `chore(sync): ${binding.sourceId} PR#${group.sourcePrNumber} to ${shortSha}`
@@ -879,8 +900,6 @@ async function applyProposalGroup(
     return false;
   }
 
-  const hasGardener = gardenerInstalled(treeRoot);
-
   const bodyLines = [
     `Automated drift sync for source \`${binding.sourceId}\`.`,
     "",
@@ -898,13 +917,6 @@ async function applyProposalGroup(
         `- [\`${c.shortSha}\`](https://github.com/${drift.ownerRepo.owner}/${drift.ownerRepo.repo}/commit/${c.sha}) ${c.message}`,
     ),
   ];
-
-  if (!hasGardener) {
-    bodyLines.push(
-      "",
-      "> \u26A0\uFE0F **No gardener configured.** This PR has not been context-reviewed. Install [repo-gardener](https://github.com/agent-team-foundation/repo-gardener) for automated context-fit review before enabling auto-merge.",
-    );
-  }
 
   const prCreate = await shellRun(
     "gh",
@@ -927,9 +939,7 @@ async function applyProposalGroup(
   }
   const prUrl = prCreate.stdout.trim();
 
-  const labels = hasGardener
-    ? ["first-tree:sync", "auto-merge"]
-    : ["first-tree:sync"];
+  const labels = ["first-tree:sync"];
   // Pre-create labels if they don't exist (ignore errors — may lack permission)
   for (const label of labels) {
     await shellRun(
@@ -1117,7 +1127,7 @@ export async function runSync(
     return hasConfigErrors ? 1 : 0;
   }
 
-  const CONCURRENCY = 5;
+  const CONCURRENCY = 10;
 
   for (const drift of driftReports) {
     // Classify per merged PR (not per batch) so each source PR → one tree PR
@@ -1225,6 +1235,52 @@ export async function runSync(
         );
         if (!ok) return 1;
         await shellRun("git", ["checkout", "-"], { cwd: repo.root });
+      }
+
+      // Open a housekeeping PR: pin the binding + regenerate CODEOWNERS
+      // This is the ONLY PR that touches the binding file and CODEOWNERS,
+      // avoiding cascade merge conflicts between individual sync PRs.
+      if (!flags.dryRun && applyCount > 0) {
+        console.log("\nOpening housekeeping PR (binding pin + CODEOWNERS)...");
+        const hkBranch = `first-tree/sync-${drift.binding.sourceId}-housekeeping`;
+        await shellRun("git", ["checkout", "-B", hkBranch], { cwd: repo.root });
+
+        // Pin the binding to the latest synced commit
+        writeTreeBinding(repo.root, drift.binding.sourceId, {
+          ...drift.binding,
+          lastReconciledSourceCommit: drift.toSha,
+          lastReconciledAt: now().toISOString(),
+        });
+
+        // Regenerate CODEOWNERS
+        await runGenerateCodeownersForTree(repo.root);
+
+        await shellRun("git", ["add", "-A"], { cwd: repo.root });
+        const hkDiff = await shellRun("git", ["diff", "--cached", "--quiet"], { cwd: repo.root });
+        if (hkDiff.code !== 0) {
+          await shellRun("git", ["commit", "-m", `chore(sync): pin ${drift.binding.sourceId} to ${drift.toSha.slice(0, 7)} + regenerate CODEOWNERS`], { cwd: repo.root });
+          await shellRun("git", ["push", "origin", "HEAD"], { cwd: repo.root });
+          const hkPr = await shellRun("gh", [
+            "pr", "create",
+            "--title", `chore(sync): housekeeping for ${drift.binding.sourceId}`,
+            "--body", [
+              "Housekeeping PR — pins the sync bookmark and regenerates CODEOWNERS.",
+              "",
+              "**Merge this AFTER all sync PRs are merged.**",
+              "",
+              `Pins \`lastReconciledSourceCommit\` to \`${drift.toSha.slice(0, 7)}\`.`,
+            ].join("\n"),
+          ], { cwd: repo.root });
+          if (hkPr.code === 0) {
+            console.log(`\u2713 Housekeeping PR opened: ${hkPr.stdout.trim()}`);
+            console.log("  Merge this AFTER all other sync PRs are merged.");
+          }
+        } else {
+          console.log("  No changes for housekeeping PR.");
+        }
+        await shellRun("git", ["checkout", "-"], { cwd: repo.root });
+      } else if (flags.dryRun && applyCount > 0) {
+        console.log(`\n(dry-run) would open housekeeping PR to pin binding to ${drift.toSha.slice(0, 7)} + regenerate CODEOWNERS`);
       }
     }
   }

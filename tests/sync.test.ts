@@ -412,21 +412,25 @@ describe("sync -- default run", () => {
   });
 });
 
-describe("sync -- gardener detection", () => {
-  it("apply without gardener installed: PR body contains warning, no auto-merge label", async () => {
+describe("sync -- PR labeling", () => {
+  it("apply labels PR with first-tree:sync only, never auto-merge", async () => {
     const tmp = useTmpDir();
     makeTreeShell(tmp.path);
-    // No gardener-manual.md installed
+    mkdirSync(join(tmp.path, ".github"), { recursive: true });
+    writeFileSync(
+      join(tmp.path, ".github", "CODEOWNERS"),
+      "/pkg-a/ @alice @bob\n",
+    );
     const fromSha = "aa".repeat(20);
     const toSha = "bb".repeat(20);
-    writeTreeBinding(tmp.path, "source-gard", {
+    writeTreeBinding(tmp.path, "source-label", {
       bindingMode: "standalone-source",
       entrypoint: "/repos/source",
       lastReconciledSourceCommit: fromSha,
       remoteUrl: "https://github.com/alice/source.git",
       rootKind: "git-repo",
       scope: "repo",
-      sourceId: "source-gard",
+      sourceId: "source-label",
       sourceName: "source",
       sourceRootPath: "../source",
       treeMode: "dedicated",
@@ -442,7 +446,6 @@ describe("sync -- gardener detection", () => {
         suggested_node_body_markdown: "# pkg-a",
       },
     ]);
-    let prBodyCaptured = "";
     let labelArgsCaptured: string[] = [];
     const shellRun: ShellRun = async (command, args) => {
       if (command === "gh" && args[0] === "auth") return okAuth();
@@ -473,13 +476,13 @@ describe("sync -- gardener detection", () => {
         return { stdout: classifyResponse, stderr: "", code: 0 };
       }
       if (command === "git") {
-        // Mock git operations
+        // diff --cached --quiet: exit 1 = has staged changes (simulate successful staging)
+        if (args.includes("diff") && args.includes("--cached") && args.includes("--quiet")) {
+          return { stdout: "", stderr: "", code: 1 };
+        }
         return { stdout: "", stderr: "", code: 0 };
       }
       if (command === "gh" && args[0] === "pr" && args[1] === "create") {
-        // Capture PR body
-        const bodyIdx = args.indexOf("--body");
-        if (bodyIdx !== -1) prBodyCaptured = args[bodyIdx + 1];
         return { stdout: "https://github.com/x/y/pull/99", stderr: "", code: 0 };
       }
       if (command === "gh" && args[0] === "pr" && args[1] === "edit") {
@@ -494,99 +497,11 @@ describe("sync -- gardener detection", () => {
       { shellRun },
     );
     expect(code).toBe(0);
-    expect(prBodyCaptured).toContain("No gardener configured");
-    // Should NOT have auto-merge label
     expect(labelArgsCaptured.join(" ")).toContain("first-tree:sync");
     expect(labelArgsCaptured.join(" ")).not.toContain("auto-merge");
-  });
-
-  it("apply with gardener installed: PR has auto-merge label", async () => {
-    const tmp = useTmpDir();
-    makeTreeShell(tmp.path);
-    // Install gardener
-    const gardenerDir = join(tmp.path, ".claude", "commands");
-    mkdirSync(gardenerDir, { recursive: true });
-    writeFileSync(join(gardenerDir, "gardener-manual.md"), "# Gardener\n");
-
-    const fromSha = "cc".repeat(20);
-    const toSha = "dd".repeat(20);
-    writeTreeBinding(tmp.path, "source-gard2", {
-      bindingMode: "standalone-source",
-      entrypoint: "/repos/source",
-      lastReconciledSourceCommit: fromSha,
-      remoteUrl: "https://github.com/alice/source.git",
-      rootKind: "git-repo",
-      scope: "repo",
-      sourceId: "source-gard2",
-      sourceName: "source",
-      sourceRootPath: "../source",
-      treeMode: "dedicated",
-      treeRepoName: "tree",
-    });
-    const classifyResponse = JSON.stringify([
-      {
-        path: "pkg-b",
-        type: "TREE_MISS",
-        target_node_path: null,
-        rationale: "No node for pkg-b",
-        suggested_node_title: "pkg-b",
-        suggested_node_body_markdown: "# pkg-b",
-      },
-    ]);
-    let prBodyCaptured = "";
-    let labelArgsCaptured: string[] = [];
-    const shellRun: ShellRun = async (command, args) => {
-      if (command === "gh" && args[0] === "auth") return okAuth();
-      if (command === "claude" && args[0] === "--version") return claudeVersionOk();
-      if (command === "gh" && args[0] === "api") {
-        const path = args[1] ?? "";
-        if (path === "/repos/alice/source/commits/HEAD") {
-          return { stdout: `${toSha}\n`, stderr: "", code: 0 };
-        }
-        if (path.startsWith("/repos/alice/source/compare/")) {
-          return {
-            stdout: JSON.stringify({
-              commits: [{
-                sha: "3".repeat(40),
-                commit: { message: "feat: thing2", author: { name: "a", date: "2026-04-01T00:00:00Z" } },
-                files: [{ filename: "pkg-b/x.ts" }],
-              }],
-            }),
-            stderr: "",
-            code: 0,
-          };
-        }
-        if (path.startsWith("search/issues")) {
-          return { stdout: JSON.stringify({ items: [] }), stderr: "", code: 0 };
-        }
-      }
-      if (command === "claude" && args[0] === "-p") {
-        return { stdout: classifyResponse, stderr: "", code: 0 };
-      }
-      if (command === "git") {
-        return { stdout: "", stderr: "", code: 0 };
-      }
-      if (command === "gh" && args[0] === "pr" && args[1] === "create") {
-        const bodyIdx = args.indexOf("--body");
-        if (bodyIdx !== -1) prBodyCaptured = args[bodyIdx + 1];
-        return { stdout: "https://github.com/x/y/pull/100", stderr: "", code: 0 };
-      }
-      if (command === "gh" && args[0] === "pr" && args[1] === "edit") {
-        labelArgsCaptured = [...args];
-        return { stdout: "", stderr: "", code: 0 };
-      }
-      return { stdout: "", stderr: `no mock for ${command} ${args.join(" ")}`, code: 1 };
-    };
-    const code = await runSync(
-      tmp.path,
-      { source: undefined, propose: false, apply: true, dryRun: false },
-      { shellRun },
-    );
-    expect(code).toBe(0);
-    expect(prBodyCaptured).not.toContain("No gardener configured");
-    // Should have auto-merge label
-    expect(labelArgsCaptured.join(" ")).toContain("auto-merge");
-    expect(labelArgsCaptured.join(" ")).toContain("first-tree:sync");
+    const nodeText = readFileSync(join(tmp.path, "pkg-a", "NODE.md"), "utf-8");
+    expect(nodeText).toContain("owners: [alice, bob]");
+    expect(nodeText).not.toContain("@alice");
   });
 });
 
