@@ -416,6 +416,11 @@ describe("sync -- PR labeling", () => {
   it("apply labels PR with first-tree:sync only, never auto-merge", async () => {
     const tmp = useTmpDir();
     makeTreeShell(tmp.path);
+    mkdirSync(join(tmp.path, ".github"), { recursive: true });
+    writeFileSync(
+      join(tmp.path, ".github", "CODEOWNERS"),
+      "/pkg-a/ @alice @bob\n",
+    );
     const fromSha = "aa".repeat(20);
     const toSha = "bb".repeat(20);
     writeTreeBinding(tmp.path, "source-label", {
@@ -494,6 +499,9 @@ describe("sync -- PR labeling", () => {
     expect(code).toBe(0);
     expect(labelArgsCaptured.join(" ")).toContain("first-tree:sync");
     expect(labelArgsCaptured.join(" ")).not.toContain("auto-merge");
+    const nodeText = readFileSync(join(tmp.path, "pkg-a", "NODE.md"), "utf-8");
+    expect(nodeText).toContain("owners: [alice, bob]");
+    expect(nodeText).not.toContain("@alice");
   });
 });
 
