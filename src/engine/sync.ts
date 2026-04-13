@@ -765,10 +765,6 @@ async function runGenerateCodeownersForTree(treeRoot: string): Promise<void> {
   }
 }
 
-function gardenerInstalled(treeRoot: string): boolean {
-  return existsSync(join(treeRoot, ".claude", "commands", "gardener-manual.md"));
-}
-
 async function applyProposalGroup(
   shellRun: ShellRun,
   treeRoot: string,
@@ -924,8 +920,6 @@ async function applyProposalGroup(
     return false;
   }
 
-  const hasGardener = gardenerInstalled(treeRoot);
-
   const bodyLines = [
     `Automated drift sync for source \`${binding.sourceId}\`.`,
     "",
@@ -943,13 +937,6 @@ async function applyProposalGroup(
         `- [\`${c.shortSha}\`](https://github.com/${drift.ownerRepo.owner}/${drift.ownerRepo.repo}/commit/${c.sha}) ${c.message}`,
     ),
   ];
-
-  if (!hasGardener) {
-    bodyLines.push(
-      "",
-      "> \u26A0\uFE0F **No gardener configured.** This PR has not been context-reviewed. Install [repo-gardener](https://github.com/agent-team-foundation/repo-gardener) for automated context-fit review before enabling auto-merge.",
-    );
-  }
 
   const prCreate = await shellRun(
     "gh",
@@ -972,9 +959,7 @@ async function applyProposalGroup(
   }
   const prUrl = prCreate.stdout.trim();
 
-  const labels = hasGardener
-    ? ["first-tree:sync", "auto-merge"]
-    : ["first-tree:sync"];
+  const labels = ["first-tree:sync"];
   // Pre-create labels if they don't exist (ignore errors — may lack permission)
   for (const label of labels) {
     await shellRun(

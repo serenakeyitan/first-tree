@@ -25,7 +25,7 @@ Detect + classify each source PR against the tree using AI. For every merged sou
 
 ### 3. Apply (`--apply`)
 
-Propose + create one tree PR per source PR. If gardener is installed on the tree repo, PRs are labeled for auto-merge. If not, the PR body includes a warning that manual review is required.
+Propose + create one tree PR per source PR, labeled `first-tree:sync` and left open for human review.
 
 ## Key design decisions
 
@@ -41,9 +41,9 @@ Classification requires the `claude` CLI. If it is not on PATH, sync exits with 
 
 Each merged source PR gets its own Claude call. This keeps the context window small, produces cleaner verdicts, and naturally maps to the one-PR-per-source-PR output model.
 
-### Gardener is required for auto-merge
+### No auto-merge — PRs require human review
 
-When gardener is installed on the tree repo, sync PRs receive an `auto-merge` label. When it is not installed, PRs are opened without the label and the PR body warns that manual review is needed.
+Sync PRs are never auto-merged. Every PR is labeled `first-tree:sync` and left open for human review. A future review agent may be added to assist, but the final merge decision is always human.
 
 ### First run traces history
 
@@ -124,7 +124,7 @@ When `--apply` runs, it produces the following artifacts in the tree repo:
 - Intermediate directories receive auto-generated `NODE.md` files.
 - The `drift/` directory is added to the root `NODE.md` domain listing.
 - `generate-codeowners` runs after writing nodes to keep ownership in sync.
-- Labels (`first-tree:sync`, `auto-merge`) are pre-created via `gh label create --force`.
+- Labels (`first-tree:sync`) are pre-created via `gh label create --force`.
 
 ## Schema changes
 
@@ -144,7 +144,7 @@ Sync and gardener are complementary but independent:
 - **Sync** proposes tree updates (opens PRs).
 - **Gardener** reviews tree PRs for context-fit (reviews and approves).
 
-Sync does not depend on gardener's code. It only checks whether gardener is installed (a file existence check) to decide whether to add the `auto-merge` label.
+Sync does not depend on gardener's code. Gardener reviews sync PRs for context-fit when installed on the tree repo, but sync operates independently.
 
 When both are installed, the coordinator runbook (`first-tree-sync-schedule.md`) runs them in sequence within a single schedule slot, avoiding rate-limit conflicts.
 
