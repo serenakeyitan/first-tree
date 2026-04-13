@@ -148,6 +148,20 @@ Sync does not depend on gardener's code. Gardener reviews sync PRs for context-f
 
 When both are installed, the coordinator runbook (`first-tree-sync-schedule.md`) runs them in sequence within a single schedule slot, avoiding rate-limit conflicts.
 
+## Roadmap: GitHub Bot mode (not current focus)
+
+The current implementation runs locally via Claude Code (CLI + schedule). A future GitHub Bot mode would make onboarding a one-click "Install" button on GitHub Marketplace, matching the Greptile experience.
+
+**Two modes, same core logic:**
+- Local mode: `claude -p` for AI, `gh` CLI for GitHub (current)
+- Bot mode: `@anthropic-ai/sdk` for AI, Octokit for GitHub (future)
+
+**Likely runtime:** GitHub Actions for gardener (fast, event-driven), Modal/Lambda for sync (long-running, bursty). GitHub App webhook triggers both.
+
+**Why it matters for adoption:** No Claude Code subscription required, no MCP connector config, no `/schedule` setup. Just install the GitHub App and it works.
+
+This is on the roadmap but not blocking the current local-mode work.
+
 ## Known limitations
 
 1. **Cloud classification quality.** The cloud schedule path uses the agent itself as classifier (no `claude` CLI in sandbox). Classification quality may differ from the local path.
