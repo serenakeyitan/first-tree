@@ -8,6 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Repo } from "#engine/repo.js";
 import {
@@ -580,7 +581,7 @@ Return a JSON array. Each element:
   "target_node_path": "path/to/existing/NODE.md (for TREE_SUPPLEMENT) or null (for TREE_MISS/TREE_OK)",
   "rationale": "one sentence explaining why",
   "suggested_node_title": "title for new node (TREE_MISS) or empty string",
-  "suggested_node_body_markdown": "draft content for new node (TREE_MISS) or suggested additions for existing node (TREE_SUPPLEMENT) or empty string (TREE_OK)"
+  "suggested_node_body_markdown": "body content ONLY — do NOT include YAML frontmatter (no --- block). Start with a markdown heading. For TREE_MISS: draft NODE.md body (2-5 paragraphs). For TREE_SUPPLEMENT: suggested additions. For TREE_OK: empty string."
 }
 
 Return a JSON array only, no prose.`;
@@ -847,18 +848,38 @@ async function prepareProposalBranch(
       dirSegment = dirSegment.replace(/\/NODE\.md$/i, "").replace(/^NODE\.md$/i, "misc");
       const absDir = join(treeRoot, dirSegment);
       mkdirSync(absDir, { recursive: true });
-      // Owner = PR author (the person who introduced this new area)
-      const owner = prAuthor || "unknown";
+
+      // Resolve owners: inherit from parent node, add PR author if not already present
+      const parentDir = dirname(absDir);
+      let parentOwners: string[] = [];
+      try {
+        const { resolveNodeOwners } = await import("../../assets/framework/helpers/generate-codeowners.js");
+        parentOwners = resolveNodeOwners(parentDir, treeRoot, new Map());
+      } catch {
+        // Fallback: no parent owners available
+      }
+      const owners = [...parentOwners];
+      if (prAuthor && prAuthor !== "unknown" && !owners.includes(prAuthor)) {
+        owners.push(prAuthor);
+      }
+      if (owners.length === 0) {
+        owners.push(prAuthor || "unknown");
+      }
+
       const title = proposal.suggested_node_title;
       const capitalizedTitle = title.charAt(0).toUpperCase() + title.slice(1);
-      const body = proposal.suggested_node_body_markdown;
+
+      // Strip any frontmatter Claude may have included in the body
+      let body = proposal.suggested_node_body_markdown;
+      body = body.replace(/^---\n[\s\S]*?\n---\n*/, "").trim();
+
       const nodePath = join(absDir, "NODE.md");
       // Only write if NODE.md doesn't already exist (don't overwrite human-authored nodes)
       if (!existsSync(nodePath)) {
         const content = [
           "---",
           `title: "${capitalizedTitle.replace(/"/g, '\\"')}"`,
-          `owners: [${owner}]`,
+          `owners: [${owners.join(", ")}]`,
           "---",
           "",
           body,
@@ -868,17 +889,35 @@ async function prepareProposalBranch(
         writtenFiles.push(nodePath);
 
         // Auto-create member if PR author isn't in members/ yet
-        if (owner && owner !== "unknown") {
-          const memberDir = join(treeRoot, "members", owner);
+        // Check all existing member dirs to avoid duplicates (e.g., dotta vs cryppadotta)
+        if (prAuthor && prAuthor !== "unknown") {
+          const membersDir = join(treeRoot, "members");
+          let alreadyExists = false;
+          if (existsSync(membersDir)) {
+            try {
+              for (const entry of readdirSync(membersDir)) {
+                const entryNode = join(membersDir, entry, "NODE.md");
+                if (!existsSync(entryNode)) continue;
+                try {
+                  const content = readFileSync(entryNode, "utf-8");
+                  if (content.includes(`owners: [${prAuthor}]`) || entry === prAuthor) {
+                    alreadyExists = true;
+                    break;
+                  }
+                } catch { /* skip unreadable */ }
+              }
+            } catch { /* skip if members dir not listable */ }
+          }
+          const memberDir = join(treeRoot, "members", prAuthor);
           const memberNode = join(memberDir, "NODE.md");
-          if (!existsSync(memberNode)) {
+          if (!alreadyExists && !existsSync(memberNode)) {
             mkdirSync(memberDir, { recursive: true });
             writeFileSync(
               memberNode,
               [
                 "---",
-                `title: "${owner}"`,
-                `owners: [${owner}]`,
+                `title: "${prAuthor}"`,
+                `owners: [${prAuthor}]`,
                 `type: "human"`,
                 `role: "Contributor"`,
                 `domains:`,
@@ -890,7 +929,7 @@ async function prepareProposalBranch(
               ].join("\n"),
             );
             writtenFiles.push(memberNode);
-            console.log(`  \u2713 Auto-created member: members/${owner}/NODE.md`);
+            console.log(`  \u2713 Auto-created member: members/${prAuthor}/NODE.md`);
           }
         }
       }
@@ -1267,9 +1306,33 @@ export async function runSync(
         await shellRun("git", ["checkout", "-"], { cwd: repo.root });
       }
 
-      // Step 2b: Push all branches in one command (much faster than individual pushes)
-      if (!flags.dryRun && prepared.length > 0) {
-        const branches = prepared.map((p) => `${p.branch}:${p.branch}`);
+      // Step 2b: Verify each branch before pushing (catch format errors early)
+      const verified: PreparedPr[] = [];
+      for (const p of prepared) {
+        await shellRun("git", ["checkout", p.branch], { cwd: repo.root });
+        const verifyResult = await shellRun("node", [
+          join(dirname(fileURLToPath(import.meta.url)), "..", "cli.js"),
+          "verify", "--tree-path", repo.root, "--skip-version-check",
+        ], { cwd: repo.root });
+        if (verifyResult.code !== 0) {
+          // Extract just the errors
+          const errors = verifyResult.stdout.split("\n").filter((l: string) => l.includes("[error]"));
+          if (errors.length > 0) {
+            console.error(`  \u26A0 verify failed for ${p.branch}:`);
+            for (const e of errors.slice(0, 5)) console.error(`    ${e.trim()}`);
+            console.log(`  \u23ED Skipping this PR due to verify errors.`);
+          } else {
+            verified.push(p);
+          }
+        } else {
+          verified.push(p);
+        }
+        await shellRun("git", ["checkout", "-"], { cwd: repo.root });
+      }
+
+      // Step 2c: Push all verified branches in one command
+      if (!flags.dryRun && verified.length > 0) {
+        const branches = verified.map((p) => `${p.branch}:${p.branch}`);
         console.log(`  Pushing ${branches.length} branch(es)...`);
         const pushResult = await shellRun("git", ["push", "origin", ...branches], { cwd: repo.root });
         if (pushResult.code !== 0) {
@@ -1277,11 +1340,11 @@ export async function runSync(
           return 1;
         }
 
-        // Step 2c: Create all PRs in parallel (concurrency 5 to avoid GitHub rate limits)
+        // Step 2d: Create all PRs in parallel (concurrency 5 to avoid GitHub rate limits)
         const PR_CONCURRENCY = 5;
-        console.log(`  Opening ${prepared.length} PR(s) (concurrency: ${PR_CONCURRENCY})...`);
-        for (let i = 0; i < prepared.length; i += PR_CONCURRENCY) {
-          const batch = prepared.slice(i, i + PR_CONCURRENCY);
+        console.log(`  Opening ${verified.length} PR(s) (concurrency: ${PR_CONCURRENCY})...`);
+        for (let i = 0; i < verified.length; i += PR_CONCURRENCY) {
+          const batch = verified.slice(i, i + PR_CONCURRENCY);
           await Promise.all(
             batch.map(async (p) => {
               const prResult = await shellRun("gh", [
@@ -1299,7 +1362,7 @@ export async function runSync(
           );
         }
       } else if (flags.dryRun) {
-        for (const p of prepared) {
+        for (const p of verified) {
           console.log(`(dry-run) would push ${p.branch} and open PR titled "${p.prTitle}"`);
         }
       }
