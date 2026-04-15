@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -22,6 +23,15 @@ import {
 } from "#engine/runtime/binding-state.js";
 
 const execFileAsync = promisify(execFile);
+
+function createJsonlLogger(path: string | undefined): (event: Record<string, unknown>) => void {
+  if (!path) return () => {};
+  mkdirSync(dirname(path), { recursive: true });
+  return (event) => {
+    const line = JSON.stringify({ ts: new Date().toISOString(), ...event });
+    appendFileSync(path, line + "\n");
+  };
+}
 
 export const SYNC_USAGE = `usage: first-tree sync [--tree-path PATH] [--source ID] [--propose] [--apply] [--dry-run]
 
@@ -47,6 +57,7 @@ Options:
   --propose           Write proposal files under .first-tree/proposals/
   --apply             Apply proposals, open PR (implies --propose)
   --dry-run           With --apply, skip \`git push\` and \`gh pr create\`
+  --log-jsonl PATH    Write structured JSONL events to a file (for live monitoring)
   --help              Show this help message
 `;
 
@@ -259,6 +270,7 @@ interface ParsedFlags {
   propose: boolean;
   apply: boolean;
   dryRun: boolean;
+  logJsonl?: string | undefined;
   unknown: string | undefined;
 }
 
@@ -270,6 +282,7 @@ function parseFlags(args: string[]): ParsedFlags {
     propose: false,
     apply: false,
     dryRun: false,
+    logJsonl: undefined,
     unknown: undefined,
   };
   for (let index = 0; index < args.length; index += 1) {
@@ -309,6 +322,16 @@ function parseFlags(args: string[]): ParsedFlags {
     }
     if (arg === "--dry-run") {
       result.dryRun = true;
+      continue;
+    }
+    if (arg === "--log-jsonl") {
+      const value = args[index + 1];
+      if (!value) {
+        result.unknown = "--log-jsonl (missing value)";
+        return result;
+      }
+      result.logJsonl = value;
+      index += 1;
       continue;
     }
     result.unknown = arg;
@@ -1057,6 +1080,16 @@ export async function runSync(
 ): Promise<number> {
   const shellRun = deps.shellRun ?? defaultShellRun;
   const now = deps.now ?? (() => new Date());
+  const log = createJsonlLogger(flags.logJsonl);
+  const syncStartTime = Date.now();
+  const logRunAndReturn = (code: number): number => {
+    log({
+      kind: "run",
+      exit_code: code,
+      duration_s: Math.round((Date.now() - syncStartTime) / 1000),
+    });
+    return code;
+  };
   const repo = new Repo(treeRoot);
 
   if (!repo.looksLikeTreeRepo()) {
@@ -1096,7 +1129,7 @@ export async function runSync(
   }
   if (bindings.length === 0) {
     console.log("no bindings found under .first-tree/bindings/. nothing to sync.");
-    return 0;
+    return logRunAndReturn(0);
   }
 
   const treeNodes = scanTreeNodes(repo.root);
@@ -1204,16 +1237,16 @@ export async function runSync(
   logDriftTable(driftReports);
 
   if (hasConfigErrors && driftReports.length === 0) {
-    return 1;
+    return logRunAndReturn(1);
   }
 
   if (!flags.propose && !flags.apply) {
-    return hasConfigErrors ? 1 : 0;
+    return logRunAndReturn(hasConfigErrors ? 1 : 0);
   }
 
   if (driftReports.length === 0) {
     console.log("nothing stale to propose.");
-    return hasConfigErrors ? 1 : 0;
+    return logRunAndReturn(hasConfigErrors ? 1 : 0);
   }
 
   const CONCURRENCY = 10;
@@ -1274,6 +1307,14 @@ export async function runSync(
           console.log(
             `  ${prLabel}: ${filtered.length} proposals (${okCount} TREE_OK skipped)`,
           );
+          log({
+            kind: "classify",
+            source_id: drift.binding.sourceId,
+            pr_number: pr.number,
+            pr_title: pr.title,
+            type: filtered.length > 0 ? filtered[0].type : "TREE_OK",
+            proposals: filtered.length,
+          });
 
           if (proposals.length > 0 && filtered.length === 0) {
             for (const p of proposals.slice(0, 3)) {
@@ -1400,27 +1441,24 @@ export async function runSync(
               ], { cwd: repo.root });
               if (prResult.code === 0) {
                 const prUrl = prResult.stdout.trim();
+                await shellRun("gh", [
+                  "label", "create", "first-tree:sync",
+                  "--color", "2ea44f", "--description", "Created by first-tree sync", "--force",
+                ], { cwd: repo.root });
+                await shellRun("gh", [
+                  "pr", "edit", prUrl, "--add-label", "first-tree:sync",
+                ], { cwd: repo.root });
                 console.log(`\u2713 opened PR ${prUrl}`);
-                await shellRun("gh", [
-                  "label",
-                  "create",
-                  "first-tree:sync",
-                  "--color",
-                  "2ea44f",
-                  "--description",
-                  "Created by first-tree sync",
-                  "--force",
-                ], { cwd: repo.root });
-                await shellRun("gh", [
-                  "pr",
-                  "edit",
-                  prUrl,
-                  "--add-label",
-                  "first-tree:sync",
-                ], { cwd: repo.root });
+                log({
+                  kind: "apply",
+                  pr_url: prUrl,
+                  pr_title: p.prTitle,
+                  source_pr: `#${p.group.sourcePrNumber ?? "unlinked"}`,
+                });
                 return true;
               } else {
                 console.error(`\u274C failed to open PR for ${p.branch}: ${prResult.stderr.trim()}`);
+                log({ kind: "error", message: `failed to open PR for ${p.branch}` });
                 return false;
               }
             }),
@@ -1493,7 +1531,7 @@ export async function runSync(
     }
   }
 
-  return 0;
+  return logRunAndReturn(0);
 }
 
 export async function runSyncCli(
@@ -1521,6 +1559,7 @@ export async function runSyncCli(
         propose: flags.propose,
         apply: flags.apply,
         dryRun: flags.dryRun,
+        logJsonl: flags.logJsonl,
       },
       deps,
     );
