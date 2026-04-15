@@ -90,11 +90,18 @@ paperclip repo gets PRs merged
   -> sync schedule detects drift (hourly)
   -> AI classifies each merged PR against tree nodes
   -> one tree PR opened per source PR
+  -> gardener-sync review (frontmatter, ownership, member dedup, content alignment)
+  -> gardener-comment review (does this tree change conflict with existing decisions?)
   -> CI checks (typecheck, test, build, verify)
-  -> gardener reviews for context-fit
   -> node owner approves
   -> squash merge -> tree is current
 ```
+
+Sync PRs receive **two layers of automated review**:
+1. **gardener-sync review** — checks the generated NODE.md for structural quality (format, ownership, member dedup, content-vs-source alignment, sibling consistency)
+2. **gardener-comment review** — checks whether the tree change conflicts with existing tree decisions (the same verdict system used for source PRs: ALIGNED / CONFLICT / etc.)
+
+Both run automatically. Neither auto-merges — node owner has final say.
 
 ## Schedule and automation
 
@@ -148,14 +155,14 @@ Schema version bumped from 1 to 2. Version 1 files continue to parse correctly �
 
 ## Relationship to gardener
 
-Sync and gardener are complementary but independent:
+Gardener has two modules that both touch sync PRs:
 
-- **Sync** proposes tree updates (opens PRs).
-- **Gardener** reviews tree PRs for context-fit (reviews and approves).
+- **gardener-sync** (review pass) — checks the generated NODE.md for structural quality: frontmatter format, ownership consistency, member dedup, content-vs-source alignment, sibling/parent consistency. This is a dedicated review for AI-generated content.
+- **gardener-comment** (verdict pass) — checks whether the tree change conflicts with existing tree decisions. This is the same ALIGNED/CONFLICT verdict system used for source repo PRs. It provides an additional layer of review from the perspective of "does this change make sense given what the tree already says?"
 
-Sync does not depend on gardener's code. Gardener reviews sync PRs for context-fit when installed on the tree repo, but sync operates independently.
+Both modules review sync PRs independently. Neither auto-merges — the node owner has final say.
 
-When both are installed, the coordinator runbook (`first-tree-sync-schedule.md`) runs them in sequence within a single schedule slot, avoiding rate-limit conflicts.
+Sync does not depend on gardener's code. When both are installed, the coordinator runbook (`gardener-sync-schedule.md`) runs them in sequence within a single schedule slot.
 
 ## Roadmap: GitHub Bot mode (not current focus)
 
