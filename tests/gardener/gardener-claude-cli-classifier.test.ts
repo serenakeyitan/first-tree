@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
 import {
+  buildClaudeCliEnvironment,
   ClaudeCliClassifierError,
   createClaudeCliClassifier,
   isAuthFailure,
@@ -111,7 +112,6 @@ describe("createClaudeCliClassifier", () => {
       else process.env.ANTHROPIC_API_KEY = originalKey;
     }
   });
-
   it("throws non_zero_exit when stderr has no auth signal", async () => {
     const classifier = createClaudeCliClassifier({
       spawnImpl: (() =>
@@ -147,9 +147,50 @@ describe("createClaudeCliClassifier", () => {
     await expect(classifier(input)).rejects.toSatisfy((e) => isBinaryMissing(e));
   });
 
+  it("scrubs ANTHROPIC_API_KEY from injected env", async () => {
+    const calls: Array<{ env?: NodeJS.ProcessEnv }> = [];
+    const classifier = createClaudeCliClassifier({
+      env: {
+        PATH: "/usr/bin:/bin",
+        ANTHROPIC_API_KEY: "sk-test",
+        GARDENER_DIR: "/tmp/gardener",
+      },
+      spawnImpl: ((
+        _command: string,
+        _args: string[],
+        options?: { env?: NodeJS.ProcessEnv },
+      ) => {
+        calls.push(options ?? {});
+        return makeFakeChild({
+          stdout: JSON.stringify({
+            verdict: "ALIGNED",
+            severity: "low",
+            summary: "ok",
+            treeNodes: [],
+          }),
+          code: 0,
+        });
+      }) as any,
+    });
+    await classifier(input);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.env?.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(calls[0]?.env?.GARDENER_DIR).toBe("/tmp/gardener");
+  });
+
   it("ClaudeCliClassifierError carries kind and stderr", () => {
     const e = new ClaudeCliClassifierError("auth_failed", "msg", "stderr body");
     expect(e.kind).toBe("auth_failed");
     expect(e.stderr).toBe("stderr body");
+  });
+
+  it("buildClaudeCliEnvironment removes ANTHROPIC_API_KEY", () => {
+    expect(
+      buildClaudeCliEnvironment({
+        PATH: "/usr/bin:/bin",
+        ANTHROPIC_API_KEY: "sk-test",
+        GARDENER_DIR: "/tmp/gardener",
+      }).ANTHROPIC_API_KEY,
+    ).toBeUndefined();
   });
 });

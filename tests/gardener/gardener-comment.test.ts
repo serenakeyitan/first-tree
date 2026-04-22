@@ -224,8 +224,8 @@ describe("gardener CLI dispatch -- comment subcommand", () => {
 
     const originalFetch = globalThis.fetch;
     const originalApiKey = process.env.ANTHROPIC_API_KEY;
-    const originalModel = process.env.GARDENER_CLASSIFIER_MODEL;
     const originalClassifier = process.env.GARDENER_CLASSIFIER;
+    const originalModel = process.env.GARDENER_CLASSIFIER_MODEL;
     const originalSnapshotDir = process.env.BREEZE_SNAPSHOT_DIR;
     const seen: { body?: string } = {};
 
@@ -277,10 +277,10 @@ describe("gardener CLI dispatch -- comment subcommand", () => {
       globalThis.fetch = originalFetch;
       if (originalApiKey === undefined) delete process.env.ANTHROPIC_API_KEY;
       else process.env.ANTHROPIC_API_KEY = originalApiKey;
-      if (originalModel === undefined) delete process.env.GARDENER_CLASSIFIER_MODEL;
-      else process.env.GARDENER_CLASSIFIER_MODEL = originalModel;
       if (originalClassifier === undefined) delete process.env.GARDENER_CLASSIFIER;
       else process.env.GARDENER_CLASSIFIER = originalClassifier;
+      if (originalModel === undefined) delete process.env.GARDENER_CLASSIFIER_MODEL;
+      else process.env.GARDENER_CLASSIFIER_MODEL = originalModel;
       if (originalSnapshotDir === undefined) delete process.env.BREEZE_SNAPSHOT_DIR;
       else process.env.BREEZE_SNAPSHOT_DIR = originalSnapshotDir;
     }
@@ -313,8 +313,8 @@ describe("gardener CLI dispatch -- comment subcommand", () => {
 
     const originalFetch = globalThis.fetch;
     const originalApiKey = process.env.ANTHROPIC_API_KEY;
-    const originalModel = process.env.GARDENER_CLASSIFIER_MODEL;
     const originalClassifier = process.env.GARDENER_CLASSIFIER;
+    const originalModel = process.env.GARDENER_CLASSIFIER_MODEL;
     const originalSnapshotDir = process.env.BREEZE_SNAPSHOT_DIR;
     const seen: { body?: string } = {};
 
@@ -366,6 +366,8 @@ describe("gardener CLI dispatch -- comment subcommand", () => {
       globalThis.fetch = originalFetch;
       if (originalApiKey === undefined) delete process.env.ANTHROPIC_API_KEY;
       else process.env.ANTHROPIC_API_KEY = originalApiKey;
+      if (originalClassifier === undefined) delete process.env.GARDENER_CLASSIFIER;
+      else process.env.GARDENER_CLASSIFIER = originalClassifier;
       if (originalModel === undefined) delete process.env.GARDENER_CLASSIFIER_MODEL;
       else process.env.GARDENER_CLASSIFIER_MODEL = originalModel;
       if (originalClassifier === undefined) delete process.env.GARDENER_CLASSIFIER;
