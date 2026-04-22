@@ -61,7 +61,7 @@ export interface AnthropicClassifierOptions {
 export function createAnthropicClassifier(
   opts: AnthropicClassifierOptions,
 ): Classifier {
-  const model = opts.model ?? DEFAULT_MODEL;
+  const model = opts.model?.trim() || DEFAULT_MODEL;
   const doFetch = opts.fetchImpl ?? fetch;
   return async (input: ClassifyInput): Promise<ClassifyOutput> => {
     const digest = formatDigest(collectTreeDigest(input.treeRoot));
