@@ -94,6 +94,12 @@ describe("gardener install-workflow — yaml builder", () => {
     );
     expect(yaml).toContain("first-tree:sync");
     expect(yaml).toContain("TREE_REPO_TOKEN: ${{ secrets.TREE_REPO_TOKEN }}");
+    expect(yaml).toContain(
+      "ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}",
+    );
+    expect(yaml).toContain(
+      "GARDENER_CLASSIFIER_MODEL: ${{ secrets.GARDENER_CLASSIFIER_MODEL }}",
+    );
   });
 
   it("honors a custom tree-path override", () => {

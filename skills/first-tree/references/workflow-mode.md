@@ -118,7 +118,24 @@ broad, user prefers a dedicated token), create a new fine-grained PAT:
    unset TOKEN
    ```
 
-## Step 3 — commit and open a PR
+## Step 3 — set the `ANTHROPIC_API_KEY` secret
+
+`gardener comment` needs a classifier to produce a verdict. When
+`ANTHROPIC_API_KEY` is unset, the CLI **refuses to post** (see PR #255)
+rather than silently degrading to a hard-coded template. This is the
+intended fail-closed behaviour for push mode.
+
+```bash
+gh secret set ANTHROPIC_API_KEY \
+  --repo <CODEBASE_OWNER>/<CODEBASE_NAME>
+```
+
+`gh secret set` will prompt for the value so the key never appears in
+shell history. The generated workflow also reads an optional
+`GARDENER_CLASSIFIER_MODEL` secret if you need to pin a specific
+Anthropic model; omit it to use the built-in default.
+
+## Step 4 — commit and open a PR
 
 Stage the new workflow file and open a PR for review:
 
@@ -132,7 +149,7 @@ gh pr create --fill
 Let a human reviewer approve the workflow addition — CI changes
 deserve a second set of eyes.
 
-## Step 4 — verify on the next merge
+## Step 5 — verify on the next merge
 
 After the workflow PR merges:
 
