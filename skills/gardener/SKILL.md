@@ -10,6 +10,81 @@ have not yet loaded the `first-tree` entry-point skill, load that first —
 it explains the toolkit layout and how the four skills relate. This skill
 covers *how* to drive the `first-tree gardener` CLI.
 
+## Onboarding — short user prompts
+
+The expected user onboarding shape is one short message naming a codebase
+repo and a tree repo, e.g.:
+
+> 监听 `https://github.com/<codebase-repo>` 这个 repo, tree 是
+> `https://github.com/<tree-repo>`. update the latest first-tree CLI
+> first, set up gardener + breeze for this scope, the rest of the check
+> are after the onboarding
+
+From that one line, branch on the five scenarios below. Do **not** pepper
+the user with config questions up front — infer what you can, ask only
+when the inference is genuinely ambiguous. Always finish by restarting
+the breeze daemon with the new `--allow-repo` list so notifications flow.
+
+### Scenario A — fresh: no tree repo yet
+
+Detected when the user hasn't given a tree slug, or the slug 404s.
+
+1. `first-tree tree init` — scaffold a new tree in cwd.
+2. Create a GitHub repo (`gh repo create ...`), push, bind locally.
+3. Populate `.claude/gardener-config.yaml` with the codebase slug under
+   `target_repos`.
+4. Continue with Scenario B or C depending on push access.
+
+### Scenario B — user owns the codebase (push mode, preferred)
+
+`gh api repos/<codebase> -q '.permissions.push'` returns true.
+
+1. Confirm `ANTHROPIC_API_KEY` is available (ask user to paste into their
+   shell env if not already exported).
+2. `gardener install-workflow --tree-repo <tree>` inside the codebase repo.
+3. Walk through `skills/first-tree/references/workflow-mode.md` for
+   `TREE_REPO_TOKEN` + `ANTHROPIC_API_KEY` secret setup (audit-log
+   caveats must be surfaced before `gh secret set`).
+4. Open the workflow PR for human review.
+
+### Scenario C — user does not own the codebase (pull mode)
+
+Push permission check fails, or the user explicitly says they can't push.
+
+1. `export ANTHROPIC_API_KEY=...` in the shell that will start the daemon
+   (launchd inherits env at bootstrap time, not at run time).
+2. `gardener start --tree-path . --code-repo <codebase> --assign-owners`
+   from inside the tree repo.
+3. `gardener status` to confirm schedules are live.
+
+### Scenario D — add a repo to an existing setup
+
+Detected when `~/.gardener/config.json` already exists or `target_repos`
+in the tree's gardener-config.yaml is non-empty.
+
+1. Append the new slug to `target_repos` in
+   `.claude/gardener-config.yaml`.
+2. Push mode: run `install-workflow` in the new codebase if the user
+   owns it; pull mode: `gardener stop && gardener start` with the added
+   `--code-repo`.
+
+### Scenario E — reset / something broken
+
+User describes missing comments or stale notifications.
+
+1. `gardener status` + tail the latest log under `~/.gardener/logs/`.
+2. Verify `ANTHROPIC_API_KEY` is in the launchd plist
+   (`plutil -p ~/.gardener/launchd/com.first-tree.gardener.<user>.plist`).
+3. `gardener stop && gardener start ...` with the same args. Restart
+   breeze with `breeze start --allow-repo ...` after.
+
+### Always: restart breeze last
+
+After any scenario, restart breeze with the full `--allow-repo` list so
+gardener-filed tree issues and PR comments surface in the Claude Code
+statusline. **Never use `--allow-repo all`** — it reopens the
+2026-04-21 stranger-repo incident.
+
 ## Two Operating Modes
 
 Gardener supports two deployment shapes that share the same verdict and
@@ -96,11 +171,29 @@ breeze's notification dispatch.
 
 For full options on any command, run `first-tree gardener <command> --help`.
 
+## Prerequisites
+
+`gardener comment` fails closed without a classifier. Before running any
+of the scan/single-item/pull/push-mode flows below, provision:
+
+- `ANTHROPIC_API_KEY` — **required** for every shipped automation path.
+  Without it the stock CLI refuses to post verdicts and exits 0 with
+  `BREEZE_RESULT: status=skipped summary=no classifier injected`.
+- `GARDENER_CLASSIFIER_MODEL` — **optional** override (default
+  `claude-haiku-4-5`). Blank values are normalized to the default, so
+  it's safe to leave the GitHub Actions secret unset.
+
+See the per-mode flows below for where each automation entrypoint reads
+these vars (shell env for scan/single-item/`run-once`, launchd plist
+for pull-mode daemon on macOS, workflow `env:` block for push mode).
+
 ## Typical Flows
 
 ### Scan mode — review every open PR/issue across all bound source repos
 
 ```bash
+export ANTHROPIC_API_KEY=sk-...        # required
+# export GARDENER_CLASSIFIER_MODEL=... # optional; default claude-haiku-4-5
 npx -p first-tree first-tree gardener comment
 ```
 
@@ -108,7 +201,9 @@ Run from inside a tree repo. Reads `.claude/gardener-config.yaml`, then
 walks every **open** PR and issue on **every** configured source repo
 (`target_repo` scalar + `target_repos` list, deduped), posting structured
 verdict comments against the tree. Results are aggregated into a single
-`BREEZE_RESULT` trailer with `repos=<n>`.
+`BREEZE_RESULT` trailer with `repos=<n>`. Without `ANTHROPIC_API_KEY`
+the stock CLI skips the sweep (`status=skipped summary=no classifier
+injected`) and does not call `gh`.
 
 ### Scan mode with merged-PR sweep
 
@@ -135,7 +230,9 @@ npx -p first-tree first-tree gardener comment --issue 7 --repo owner/app-repo
 The single-item form is what breeze-runner calls when dispatching on a
 notification. Skips the scan; reviews exactly the one item. Also takes
 the merge→tree-issue branch when pointed at a single MERGED PR with a
-prior gardener marker and `TREE_REPO_TOKEN` set.
+prior gardener marker and `TREE_REPO_TOKEN` set. `ANTHROPIC_API_KEY`
+must be present in the invoking shell or the run exits early with
+`status=skipped summary=no classifier injected`.
 
 ### Pull-mode daemon — monitor many code repos on a schedule
 
@@ -144,6 +241,8 @@ drift detection (`gardener sync`) to run on a timer in addition to
 per-PR verdict comments.
 
 ```bash
+export ANTHROPIC_API_KEY=sk-...        # required; forwarded into launchd plist
+# export GARDENER_CLASSIFIER_MODEL=... # optional override
 # 1. Bind the tree checkout first (if not already): `first-tree tree bind`
 # 2. Start the daemon pointed at the tree + the code repos to watch.
 npx -p first-tree first-tree gardener start \
@@ -158,7 +257,11 @@ What happens:
 - `~/.gardener/config.json` is written with the supplied schedule.
 - On macOS, a launchd plist `com.first-tree.gardener.<user>.plist`
   lives at `~/.gardener/launchd/` and is bootstrapped into the user
-  domain. On other platforms, a detached child process is spawned.
+  domain. `ANTHROPIC_API_KEY` and (if set) `GARDENER_CLASSIFIER_MODEL`
+  from the invoking shell are forwarded into the plist's
+  `EnvironmentVariables` dict — launchd does not inherit shell env, so
+  these must be exported before `gardener start`. On other platforms,
+  a detached child process is spawned with the full parent env.
 - The daemon ticks every ~30 s. Each tick checks whether
   `gardener-sweep` or `sync-sweep` is due and runs it as a subprocess
   (`gardener comment --merged-since 2×interval` and `gardener sync`
@@ -189,9 +292,14 @@ npx -p first-tree first-tree gardener install-workflow \
 
 Set the `TREE_REPO_TOKEN` secret (see the workflow-mode reference for
 the quick `gh auth token` path and its caveats, or the scoped-PAT
-fallback). Commit the generated workflow file and open a PR. On every
-PR merge thereafter the workflow files a tree-repo issue assigned to
-the NODE owners.
+fallback) **and** the `ANTHROPIC_API_KEY` secret on the codebase repo —
+the generated workflow references both via
+`secrets.ANTHROPIC_API_KEY` / `secrets.TREE_REPO_TOKEN` and falls back
+to a skip if the classifier key is missing. `GARDENER_CLASSIFIER_MODEL`
+is wired through as an optional secret; leave it unset to use the
+default model. Commit the generated workflow file and open a PR. On
+every PR merge thereafter the workflow files a tree-repo issue assigned
+to the NODE owners.
 
 ### Respond to feedback on a sync PR
 
@@ -254,11 +362,14 @@ The `modules.<name>.enabled: false` knob is the opt-out: gardener exits
 
 ## Environment
 
-Gardener reads a small set of env vars. All are optional except
-`TREE_REPO_TOKEN`, which is only needed for the merge→issue branch.
+Gardener reads a small set of env vars. `ANTHROPIC_API_KEY` is required
+for every `gardener comment` invocation; `TREE_REPO_TOKEN` is required
+only for the merge→issue branch.
 
 | Variable | Purpose |
 |---|---|
+| `ANTHROPIC_API_KEY` | **Required** for `gardener comment`. The stock CLI instantiates the built-in Anthropic classifier from this key; if it is unset, `runComment` fails closed and emits `BREEZE_RESULT: status=skipped summary=no classifier injected` without touching `gh`. Forwarded into the launchd plist by `gardener start`; referenced as `secrets.ANTHROPIC_API_KEY` by the push-mode workflow generated by `install-workflow`. |
+| `GARDENER_CLASSIFIER_MODEL` | Optional override for the classifier model (default `claude-haiku-4-5`). Blank/unset is normalized to the default, so it's safe to leave the GitHub Actions secret empty. |
 | `BREEZE_SNAPSHOT_DIR` | Directory with pre-fetched `pr-view.json`, `pr.diff`, `issue-view.json`, `issue-comments.json`, `pr-reviews.json`, `subject.json`. Set by breeze-runner so gardener doesn't re-fetch. Also enables snapshot-mode idempotency checks in `respond` when `pr-commits.json` is present. |
 | `TREE_REPO_TOKEN` | PAT with `repo` scope on the tree repo. Consumed **only** by `comment`'s merge→issue branch, for `gh issue create` and the follow-up marker PATCH. No fallback to `GH_TOKEN`/`GITHUB_TOKEN` — if unset, the merge→issue path silently skips and logs `skipped: token_absent`. |
 | `COMMENT_LOG` | Path for JSONL run events from `comment` (default `$HOME/.gardener/comment-runs.jsonl`; falls back to `$TMPDIR` when `HOME` is unset). |
@@ -268,6 +379,9 @@ Gardener reads a small set of env vars. All are optional except
 
 Gardener refuses to act when:
 
+- `ANTHROPIC_API_KEY` is unset (no classifier injected — `comment`
+  exits 0 with `status=skipped summary=no classifier injected` before
+  calling `gh`)
 - Only it has reviewed the PR (self-loop guard) — prevents infinite
   response loops
 - The target PR is itself a `first-tree:sync` PR on a tree repo — use
