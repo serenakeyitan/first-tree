@@ -73,6 +73,45 @@ describe("createClaudeCliClassifier", () => {
     await expect(classifier(input)).rejects.toSatisfy((e) => isAuthFailure(e));
   });
 
+  it("treats 'Invalid API key · Fix external API key' as auth_failed", async () => {
+    const classifier = createClaudeCliClassifier({
+      spawnImpl: (() =>
+        makeFakeChild({
+          stderr: "Invalid API key · Fix external API key",
+          code: 1,
+        })) as any,
+    });
+    await expect(classifier(input)).rejects.toSatisfy((e) => isAuthFailure(e));
+  });
+
+  it("scrubs ANTHROPIC_API_KEY from subprocess env", async () => {
+    let capturedEnv: NodeJS.ProcessEnv | undefined;
+    const originalKey = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = "sk-parent-should-not-leak";
+    try {
+      const classifier = createClaudeCliClassifier({
+        spawnImpl: ((_bin: string, _args: string[], opts: any) => {
+          capturedEnv = opts?.env;
+          return makeFakeChild({
+            stdout: JSON.stringify({
+              verdict: "NEW_TERRITORY",
+              severity: "low",
+              summary: "ok",
+              treeNodes: [],
+            }),
+            code: 0,
+          });
+        }) as any,
+      });
+      await classifier(input);
+      expect(capturedEnv).toBeDefined();
+      expect(capturedEnv!.ANTHROPIC_API_KEY).toBeUndefined();
+    } finally {
+      if (originalKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = originalKey;
+    }
+  });
+
   it("throws non_zero_exit when stderr has no auth signal", async () => {
     const classifier = createClaudeCliClassifier({
       spawnImpl: (() =>

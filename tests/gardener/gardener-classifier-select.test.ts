@@ -99,13 +99,6 @@ describe("wrapWithApiKeyFallback", () => {
   });
 
   it("falls back to anthropic on auth_failed when API key set", async () => {
-    // Build a custom classifier pipeline by calling selectClassifier with
-    // claude-cli forced + API key. We can't easily inject into the claude-cli
-    // path from here, so exercise wrapWithApiKeyFallback indirectly via
-    // constructing a fake primary that throws auth_failed.
-    const { default: _ } = await import("#products/gardener/engine/classifiers/select.js");
-    // Build a manual fallback using the same helper approach: call into the
-    // anthropic classifier via a stubbed fetch to confirm secondary invocation.
     const lines: string[] = [];
     const stubFetch: typeof fetch = async () =>
       new Response(

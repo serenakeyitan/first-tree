@@ -121,13 +121,20 @@ function runClaude(
   return new Promise((resolveRun) => {
     let child;
     try {
+      // Scrub ANTHROPIC_API_KEY from the subprocess env. If the key is
+      // inherited, claude-cli prefers it over the local OAuth session,
+      // which defeats the entire point of this classifier (and lets a
+      // bad/test key cause "Invalid API key" failures that look like
+      // our bug but are actually the host env leaking in).
+      const childEnv = { ...process.env };
+      delete childEnv.ANTHROPIC_API_KEY;
       child = spawner(binary, [
         "-p",
         "--output-format",
         "text",
         "--model",
         model,
-      ], { stdio: ["pipe", "pipe", "pipe"] });
+      ], { stdio: ["pipe", "pipe", "pipe"], env: childEnv });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       throw new ClaudeCliClassifierError(
@@ -187,6 +194,9 @@ function classifyFailure(
     "unauthorized",
     "401",
     "invalid token",
+    "invalid api key",
+    "invalid_api_key",
+    "fix external api key",
     "expired",
   ];
   if (authSignals.some((s) => lower.includes(s))) return "auth_failed";
