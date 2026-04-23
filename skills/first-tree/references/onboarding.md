@@ -214,6 +214,28 @@ answer is missing or ambiguous, stop and re-ask.
 
 ### 6.2 Verify Watch Status
 
+First, confirm the user's active `github.com` `gh` token has the
+`notifications` scope — without it `/subscription` returns 404 for
+every repo, whether watching or not. Scope the check to the active
+`github.com` account; a bare `gh auth status | grep notifications`
+can false-positive on multi-host or multi-account setups where
+another stored account has the scope:
+
+```bash
+gh auth status --active --hostname github.com 2>&1 | grep -i 'notifications'
+```
+
+If the scope is missing, instruct the user to run:
+
+```bash
+gh auth refresh -h github.com -s notifications
+```
+
+This is interactive and opens a browser for consent. Wait for the
+user to confirm before proceeding.
+
+Once the scope is present, check the subscription:
+
 ```bash
 gh api /repos/<source-repo>/subscription
 # 200 → watching
@@ -356,6 +378,15 @@ ignore them.
   first-time setup).
 - Pull-based dispatch silently no-ops without a GitHub watch
   subscription. Verify before claiming setup is complete.
+- `gh api /repos/<repo>/subscription` returns 404 when the active
+  `github.com` token lacks the `notifications` scope — which default
+  `gh auth login` does **not** grant. Check scope with
+  `gh auth status --active --hostname github.com 2>&1 | grep -i
+  notifications` (scope the check to the active account — a bare
+  `gh auth status` grep can false-positive on multi-host or
+  multi-account setups). If missing, run
+  `gh auth refresh -h github.com -s notifications`. Treat 404 as
+  "not watching" only after the scope is confirmed present.
 - `TREE_REPO_TOKEN` must be in the environment for every `gardener`
   invocation, not just at setup.
 
