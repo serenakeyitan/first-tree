@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, symlink } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,6 +36,12 @@ const commandGroups = [
 
 async function readJson(path) {
   return JSON.parse(await readFile(path, "utf8"));
+}
+
+async function makeGitRepoDir(prefix) {
+  const dir = await mkdtemp(resolve(tmpdir(), prefix));
+  await writeFile(resolve(dir, ".git"), "gitdir: /tmp/mock\n");
+  return dir;
 }
 
 function runCli(args, options = {}) {
@@ -87,7 +93,8 @@ describe("first-tree CLI", () => {
   });
 
   it("prints inspect output for the current repo", async () => {
-    const result = await runCli(["tree", "inspect"]);
+    const cwd = await makeGitRepoDir("first-tree-inspect-");
+    const result = await runCli(["tree", "inspect"], { cwd });
 
     expect(result.code).toBe(0);
     expect(result.stderr).toBe("");
@@ -96,7 +103,8 @@ describe("first-tree CLI", () => {
   });
 
   it("prints inspect json for the current repo", async () => {
-    const result = await runCli(["tree", "inspect", "--json"]);
+    const cwd = await makeGitRepoDir("first-tree-inspect-json-");
+    const result = await runCli(["tree", "inspect", "--json"], { cwd });
 
     expect(result.code).toBe(0);
     expect(result.stderr).toBe("");
@@ -145,7 +153,8 @@ describe("first-tree CLI", () => {
   });
 
   it("fails closed when github scan poll has no tree binding", async () => {
-    const result = await runCli(["github", "scan", "poll", "--allow-repo", "owner/repo"]);
+    const cwd = await makeGitRepoDir("first-tree-no-binding-");
+    const result = await runCli(["github", "scan", "poll", "--allow-repo", "owner/repo"], { cwd });
 
     expect(result.code).toBe(1);
     expect(result.stdout).toBe("");

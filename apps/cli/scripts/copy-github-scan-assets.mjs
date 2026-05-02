@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const APPS_CLI_ROOT = resolve(HERE, "..");
 const PACKAGE_ROOT = resolve(APPS_CLI_ROOT, "..", "..", "packages", "github-scan");
+const SKILLS_ROOT = resolve(APPS_CLI_ROOT, "..", "..", "skills");
 const DIST = join(APPS_CLI_ROOT, "dist");
 
 if (!existsSync(DIST)) {
@@ -37,5 +38,15 @@ for (const [src, dst] of copies) {
   const bytes = readFileSync(srcPath).length;
   console.log(`  copied ${src} -> dist/${dst} (${bytes} bytes)`);
 }
+
+if (!existsSync(SKILLS_ROOT)) {
+  console.error(`copy-github-scan-assets: missing skills root ${SKILLS_ROOT}`);
+  process.exit(1);
+}
+
+const skillsDst = join(DIST, "skills");
+mkdirSync(dirname(skillsDst), { recursive: true });
+cpSync(SKILLS_ROOT, skillsDst, { recursive: true });
+console.log("  copied skills/ -> dist/skills/");
 
 console.log("copy-github-scan-assets: ok");

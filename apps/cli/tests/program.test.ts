@@ -475,12 +475,15 @@ describe("first-tree program", () => {
   });
 
   it("blocks github scan poll without a binding", async () => {
+    const root = makeTempDir();
     runGitHubScanMock.mockClear();
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const previousExitCode = process.exitCode;
+    const previousCwd = process.cwd();
     process.exitCode = 0;
 
     try {
+      process.chdir(root);
       await runProgram(["github", "scan", "poll", "--allow-repo", "owner/repo"], "0.0.0-test");
 
       expect(runGitHubScanMock).not.toHaveBeenCalled();
@@ -488,13 +491,21 @@ describe("first-tree program", () => {
       expect(error).toHaveBeenCalledOnce();
       expect(String(error.mock.calls[0]?.[0])).toContain("requires a bound tree repo");
     } finally {
+      process.chdir(previousCwd);
       process.exitCode = previousExitCode;
     }
   });
 
   it("accepts an explicit --tree-repo override for github scan and strips it before dispatch", async () => {
     runGitHubScanMock.mockClear();
-    runGitHubScanMock.mockResolvedValue(0);
+    const previousTreeRepo = process.env.FIRST_TREE_GITHUB_SCAN_TREE_REPO;
+    delete process.env.FIRST_TREE_GITHUB_SCAN_TREE_REPO;
+    runGitHubScanMock.mockImplementation(async () => {
+      expect(process.env.FIRST_TREE_GITHUB_SCAN_TREE_REPO).toBe(
+        "agent-team-foundation/first-tree-context",
+      );
+      return 0;
+    });
     const previousExitCode = process.exitCode;
     process.exitCode = 0;
 
@@ -513,7 +524,13 @@ describe("first-tree program", () => {
       );
 
       expect(runGitHubScanMock).toHaveBeenCalledWith(["poll", "--allow-repo", "owner/repo"]);
+      expect(process.env.FIRST_TREE_GITHUB_SCAN_TREE_REPO).toBeUndefined();
     } finally {
+      if (previousTreeRepo === undefined) {
+        delete process.env.FIRST_TREE_GITHUB_SCAN_TREE_REPO;
+      } else {
+        process.env.FIRST_TREE_GITHUB_SCAN_TREE_REPO = previousTreeRepo;
+      }
       process.exitCode = previousExitCode;
     }
   });
@@ -538,7 +555,12 @@ describe("first-tree program", () => {
     );
 
     runGitHubScanMock.mockClear();
-    runGitHubScanMock.mockResolvedValue(0);
+    const previousTreeRepo = process.env.FIRST_TREE_GITHUB_SCAN_TREE_REPO;
+    delete process.env.FIRST_TREE_GITHUB_SCAN_TREE_REPO;
+    runGitHubScanMock.mockImplementation(async () => {
+      expect(process.env.FIRST_TREE_GITHUB_SCAN_TREE_REPO).toBe("acme/context");
+      return 0;
+    });
     const previousExitCode = process.exitCode;
     const previousCwd = process.cwd();
     process.exitCode = 0;
@@ -548,7 +570,13 @@ describe("first-tree program", () => {
       await runProgram(["github", "scan", "poll", "--allow-repo", "owner/repo"], "0.0.0-test");
 
       expect(runGitHubScanMock).toHaveBeenCalledWith(["poll", "--allow-repo", "owner/repo"]);
+      expect(process.env.FIRST_TREE_GITHUB_SCAN_TREE_REPO).toBeUndefined();
     } finally {
+      if (previousTreeRepo === undefined) {
+        delete process.env.FIRST_TREE_GITHUB_SCAN_TREE_REPO;
+      } else {
+        process.env.FIRST_TREE_GITHUB_SCAN_TREE_REPO = previousTreeRepo;
+      }
       process.chdir(previousCwd);
       process.exitCode = previousExitCode;
     }

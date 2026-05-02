@@ -7,8 +7,8 @@ description: Operate the `first-tree github scan` CLI — the GitHub notificatio
 
 This skill is the operational handbook for the `github-scan` product. If you have
 not yet loaded the `first-tree` entry-point skill, load that first — it
-explains the toolkit layout and how the four skills relate. This skill
-covers *how* to drive the `first-tree github scan` CLI.
+explains the toolkit layout and the current canonical First Tree skill set. This skill
+covers _how_ to drive the `first-tree github scan` CLI.
 
 ## When To Use This Skill
 
@@ -39,15 +39,15 @@ and safe to re-run.
 
 ### Primary (start here)
 
-| Command | Purpose |
-|---|---|
+| Command                                                  | Purpose                                                                                                                                                                                                                                                                                                                   |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `first-tree github scan install --allow-repo owner/repo` | First-run setup — checks `gh`/`jq`/`gh auth`, creates `~/.first-tree/github-scan/config.yaml` with defaults, and starts the daemon. The repo scope is required so github-scan never falls back to scanning the whole account. (Wiring the Claude Code statusline is a separate manual step — see the Statusline section.) |
-| `first-tree github scan start --allow-repo owner/repo` | Launch the daemon in the background (launchd on macOS, detached spawn elsewhere) |
-| `first-tree github scan stop` | Stop the daemon and remove its lock |
-| `first-tree github scan status` | Print the daemon lock + runtime/status.env |
-| `first-tree github scan doctor` | One-screen diagnostic of the local install |
-| `first-tree github scan watch` | Live TUI: status board + activity feed |
-| `first-tree github scan poll` | Poll explicit GitHub mentions and review requests once (no daemon required) |
+| `first-tree github scan start --allow-repo owner/repo`   | Launch the daemon in the background (launchd on macOS, detached spawn elsewhere)                                                                                                                                                                                                                                          |
+| `first-tree github scan stop`                            | Stop the daemon and remove its lock                                                                                                                                                                                                                                                                                       |
+| `first-tree github scan status`                          | Print the daemon lock + runtime/status.env                                                                                                                                                                                                                                                                                |
+| `first-tree github scan doctor`                          | One-screen diagnostic of the local install                                                                                                                                                                                                                                                                                |
+| `first-tree github scan watch`                           | Live TUI: status board + activity feed                                                                                                                                                                                                                                                                                    |
+| `first-tree github scan poll`                            | Poll explicit GitHub mentions and review requests once (no daemon required)                                                                                                                                                                                                                                               |
 
 ### Advanced (agents, debugging)
 
@@ -55,24 +55,24 @@ These are the daemon's foreground entrypoints and manual-cleanup helpers.
 Humans normally only need the primary set above; reach for these when
 debugging the pipeline or when `doctor` directs you to.
 
-| Command | Purpose |
-|---|---|
+| Command                                                                                                        | Purpose                                                                                                 |
+| -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | `first-tree github scan run --allow-repo owner/repo` / `first-tree github scan daemon --allow-repo owner/repo` | Run the broker loop in the foreground. `start` is preferred for humans; `daemon` is invoked by launchd. |
-| `first-tree github scan run-once --allow-repo owner/repo` | Run one poll cycle, wait for drain, then exit. Useful for debugging the daemon pipeline. |
-| `first-tree github scan cleanup` | Remove stale workspaces and expired claims. Only run if `doctor` suggests it. |
+| `first-tree github scan run-once --allow-repo owner/repo`                                                      | Run one poll cycle, wait for drain, then exit. Useful for debugging the daemon pipeline.                |
+| `first-tree github scan cleanup`                                                                               | Remove stale workspaces and expired claims. Only run if `doctor` suggests it.                           |
 
 ### Hook / internal entry points (do not invoke directly)
 
-These exist for compatibility or to be called *by other code*. Never
+These exist for compatibility or to be called _by other code_. Never
 invoke them manually from a shell or from an agent action — they are
 listed here only so you recognize what they are when you encounter them
 in `ps`, config files, or log lines.
 
-| Command | Why it exists |
-|---|---|
-| `first-tree github scan statusline` | Claude Code statusline hook. Claude Code should be pointed at the pre-bundled `dist/github-scan-statusline.js` directly for sub-30 ms cold start (see the Statusline section below). The CLI shim exists for parity. |
-| `first-tree github scan status-manager` | Internal helper used by the github-scan runner to manage per-session status entries. Runners call it programmatically; no direct human or agent use. |
-| `first-tree github scan poll-inbox` | Legacy alias for `poll`. Kept so existing scripts keep working; new callers should use `poll`. |
+| Command                                 | Why it exists                                                                                                                                                                                                        |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `first-tree github scan statusline`     | Claude Code statusline hook. Claude Code should be pointed at the pre-bundled `dist/github-scan-statusline.js` directly for sub-30 ms cold start (see the Statusline section below). The CLI shim exists for parity. |
+| `first-tree github scan status-manager` | Internal helper used by the github-scan runner to manage per-session status entries. Runners call it programmatically; no direct human or agent use.                                                                 |
+| `first-tree github scan poll-inbox`     | Legacy alias for `poll`. Kept so existing scripts keep working; new callers should use `poll`.                                                                                                                       |
 
 For full options on any command, run `first-tree github scan <command> --help`.
 

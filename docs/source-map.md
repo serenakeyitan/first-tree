@@ -21,16 +21,25 @@ restructured workspace.
 
 ## GitHub Scan Runtime
 
-- [`packages/auto/src/cli.ts`](../packages/auto/src/cli.ts): dispatcher and help text
-- [`packages/auto/src/commands/`](../packages/auto/src/commands): command implementations
-- [`packages/auto/src/daemon/`](../packages/auto/src/daemon): long-running runtime
-- [`packages/auto/src/runtime/`](../packages/auto/src/runtime): parsing, config, paths, task state
-- [`packages/auto/README.md`](../packages/auto/README.md): package-level overview
+- [`packages/github-scan/src/cli.ts`](../packages/github-scan/src/cli.ts): package-local CLI entry
+- [`packages/github-scan/src/github-scan/cli.ts`](../packages/github-scan/src/github-scan/cli.ts): dispatcher and help text
+- [`packages/github-scan/src/github-scan/engine/commands/`](../packages/github-scan/src/github-scan/engine/commands): command implementations
+- [`packages/github-scan/src/github-scan/engine/daemon/`](../packages/github-scan/src/github-scan/engine/daemon): long-running runtime
+- [`packages/github-scan/src/github-scan/engine/runtime/`](../packages/github-scan/src/github-scan/engine/runtime): parsing, config, paths, task state
+- [`packages/github-scan/README.md`](../packages/github-scan/README.md): package-level overview
+
+## Canonical Skills
+
+- [`skills/first-tree/`](../skills/first-tree): whitepaper and routing skill
+- [`skills/first-tree-onboarding/`](../skills/first-tree-onboarding): onboarding workflow skill
+- [`skills/first-tree-sync/`](../skills/first-tree-sync): drift audit skill
+- [`skills/first-tree-write/`](../skills/first-tree-write): source-driven tree writing skill
+- [`skills/first-tree-github-scan/`](../skills/first-tree-github-scan): notification-handling agent skill
 
 ## Tests
 
 - [`apps/cli/tests/`](../apps/cli/tests): umbrella CLI tests
-- [`packages/auto/tests/`](../packages/auto/tests): GitHub scan runtime tests
+- [`packages/github-scan/tests/`](../packages/github-scan/tests): GitHub scan runtime tests
 
 ## Historical Reference
 

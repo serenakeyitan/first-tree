@@ -3,6 +3,7 @@ import type { Command } from "commander";
 import type { CommandModule } from "../types.js";
 import {
   isGitHubScanHelpRequest,
+  readTreeRepoArg,
   requiresGitHubScanBinding,
   resolveGitHubScanBinding,
   stripTreeRepoArg,
@@ -11,6 +12,8 @@ import {
 type CommandWithUnknownCommand = Command & {
   unknownCommand(): void;
 };
+
+const GITHUB_SCAN_TREE_REPO_ENV = "FIRST_TREE_GITHUB_SCAN_TREE_REPO";
 
 export const githubCommand: CommandModule = {
   name: "github",
@@ -39,8 +42,13 @@ export const githubCommand: CommandModule = {
       .action(async (_args: string[]) => {
         const forwardedArgs = [...scanCommand.args];
         const subcommand = forwardedArgs[0];
+        const requiresBinding = requiresGitHubScanBinding(subcommand);
+        const hasExplicitTreeRepo = readTreeRepoArg(forwardedArgs) !== undefined;
+        const shouldResolveBinding = requiresBinding || hasExplicitTreeRepo;
+        const previousTreeRepo = process.env[GITHUB_SCAN_TREE_REPO_ENV];
+        let resolvedTreeRepo: string | undefined;
 
-        if (requiresGitHubScanBinding(subcommand) && !isGitHubScanHelpRequest(forwardedArgs)) {
+        if (shouldResolveBinding && !isGitHubScanHelpRequest(forwardedArgs)) {
           const resolution = resolveGitHubScanBinding(forwardedArgs);
 
           if (!resolution.ok) {
@@ -48,13 +56,40 @@ export const githubCommand: CommandModule = {
             process.exitCode = 1;
             return;
           }
+
+          if (requiresBinding && resolution.treeRepo === undefined) {
+            console.error(
+              [
+                "first-tree github scan resolved local binding metadata, but it did not include a published GitHub tree repo.",
+                "Run `first-tree tree publish` first, or retry with `--tree-repo <owner/repo>`.",
+              ].join("\n"),
+            );
+            process.exitCode = 1;
+            return;
+          }
+
+          resolvedTreeRepo = resolution.treeRepo;
         }
 
-        const { runGitHubScan } = await import("@first-tree/github-scan");
-        const exitCode = await runGitHubScan(stripTreeRepoArg(forwardedArgs));
+        if (resolvedTreeRepo !== undefined) {
+          process.env[GITHUB_SCAN_TREE_REPO_ENV] = resolvedTreeRepo;
+        }
 
-        if (typeof exitCode === "number" && exitCode !== 0) {
-          process.exitCode = exitCode;
+        try {
+          const { runGitHubScan } = await import("@first-tree/github-scan");
+          const exitCode = await runGitHubScan(stripTreeRepoArg(forwardedArgs));
+
+          if (typeof exitCode === "number" && exitCode !== 0) {
+            process.exitCode = exitCode;
+          }
+        } finally {
+          if (resolvedTreeRepo !== undefined) {
+            if (previousTreeRepo === undefined) {
+              delete process.env[GITHUB_SCAN_TREE_REPO_ENV];
+            } else {
+              process.env[GITHUB_SCAN_TREE_REPO_ENV] = previousTreeRepo;
+            }
+          }
         }
       });
 
