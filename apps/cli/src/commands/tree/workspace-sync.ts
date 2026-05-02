@@ -165,6 +165,32 @@ function applyWorkspaceSync(plan: ReturnType<typeof resolveWorkspacePlan>): bool
   return hadFailure;
 }
 
+export function syncWorkspaceMembersFromRoot(options: {
+  treePath?: string;
+  treeUrl?: string;
+  workspaceId?: string;
+  workspaceRoot: string;
+}): boolean {
+  const workspaceRoot = resolve(options.workspaceRoot);
+  const workspaceId = options.workspaceId?.trim() || repoNameForRoot(workspaceRoot);
+  const treePath = options.treePath;
+  const treeUrl = options.treeUrl;
+
+  if (!treePath && !treeUrl) {
+    throw new Error(
+      "Could not resolve the shared tree for this workspace. Pass --tree-path or --tree-url, or bind the workspace root first.",
+    );
+  }
+
+  return applyWorkspaceSync({
+    members: discoverWorkspaceRepos(workspaceRoot),
+    treePath,
+    treeUrl,
+    workspaceId,
+    workspaceRoot,
+  });
+}
+
 function runWorkspaceSyncCommand(context: CommandContext): void {
   try {
     const options = readWorkspaceSyncOptions(context.command);

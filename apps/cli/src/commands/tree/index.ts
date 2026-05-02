@@ -4,11 +4,14 @@ import { createPlaceholderSubcommand } from "../placeholder.js";
 import type { CommandModule, SubcommandModule } from "../types.js";
 import { registerCommandGroup, registerSubcommands } from "../groups.js";
 import { bindCommand } from "./bind.js";
+import { bootstrapCommand } from "./bootstrap.js";
 import { generateCodeownersCommand } from "./generate-codeowners.js";
 import { inspectCommand } from "./inspect.js";
 import { injectContextCommand } from "./inject-context.js";
+import { initCommand } from "./init.js";
 import { integrateCommand } from "./integrate.js";
 import { installClaudeCodeHookCommand } from "./install-claude-code-hook.js";
+import { publishCommand } from "./publish.js";
 import { skillSubcommands } from "./skill.js";
 import { statusCommand } from "./status.js";
 import { verifyCommand } from "./verify.js";
@@ -35,16 +38,8 @@ command surface for the 0.4.0 CLI layout.
 const treeSubcommands: SubcommandModule[] = [
   inspectCommand,
   statusCommand,
-  createPlaceholderSubcommand({
-    name: "init",
-    description: "Onboard a repo or workspace to a Context Tree.",
-    message: "first-tree tree init is not implemented yet.",
-  }),
-  createPlaceholderSubcommand({
-    name: "bootstrap",
-    description: "Bootstrap an explicit tree repo checkout.",
-    message: "first-tree tree bootstrap is not implemented yet.",
-  }),
+  initCommand,
+  bootstrapCommand,
   bindCommand,
   integrateCommand,
   verifyCommand,
@@ -53,11 +48,7 @@ const treeSubcommands: SubcommandModule[] = [
     description: "Refresh local first-tree integration and tree metadata.",
     message: "first-tree tree upgrade is not implemented yet.",
   }),
-  createPlaceholderSubcommand({
-    name: "publish",
-    description: "Publish a tree repo and refresh bound source repos.",
-    message: "first-tree tree publish is not implemented yet.",
-  }),
+  publishCommand,
   generateCodeownersCommand,
   installClaudeCodeHookCommand,
   injectContextCommand,

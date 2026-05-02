@@ -48,10 +48,6 @@ const commandMessages: Array<{
   message: string;
 }> = [
   {
-    args: ["tree", "init"],
-    message: "first-tree tree init is not implemented yet.",
-  },
-  {
     args: ["hub", "start"],
     message: "first-tree hub start is not implemented yet.",
   },
@@ -444,6 +440,24 @@ describe("first-tree program", () => {
       const payload = JSON.parse(String(log.mock.calls[0]?.[0]));
       expect(payload.hookSpecificOutput.hookEventName).toBe("SessionStart");
       expect(payload.hookSpecificOutput.additionalContext).toContain("# Root");
+    } finally {
+      process.chdir(previousCwd);
+    }
+  });
+
+  it("bootstraps a tree repo in process", async () => {
+    const treeRoot = makeTempDir();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const previousCwd = process.cwd();
+    process.chdir(treeRoot);
+
+    try {
+      const result = await runProgram(["tree", "bootstrap", "--here"], "0.0.0-test");
+
+      expect(result.code).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toBe("");
+      expect(log).toHaveBeenCalled();
     } finally {
       process.chdir(previousCwd);
     }

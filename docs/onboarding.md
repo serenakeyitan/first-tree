@@ -14,8 +14,8 @@ The restructured CLI is centered on three ideas:
    `unbound-workspace-root`, `unbound-source-repo`, and `unknown`.
 2. Decide whether you are creating a new dedicated tree repo or joining an
    existing shared tree.
-3. Use `first-tree tree init` as the high-level entrypoint once the tree engine
-   has been fully ported back into this workspace.
+3. Use `first-tree tree init` as the high-level entrypoint for onboarding this
+   repo or workspace.
 4. If your current root is a workspace, use `first-tree tree workspace sync`
    after adding new child repos.
 5. Before starting `first-tree github scan`, make sure a binding exists in
@@ -29,8 +29,8 @@ At the moment:
   `tree workspace sync`, `tree verify`, `tree generate-codeowners`,
   `tree install-claude-code-hook`, and `tree inject-context` are implemented
 - `tree help onboarding` prints the short in-CLI version of this guide
-- `tree init`, `tree bootstrap`, `tree upgrade`, `tree publish`, and
-  `tree review` are still the main scaffolding surface while the old engine is ported back
+- `tree init`, `tree bootstrap`, and `tree publish` are now implemented
+- `tree upgrade` and `tree review` are still the main scaffolding surface while the old engine is ported back
 - `github scan` is the most complete runtime in the workspace today
 
 ## When To Reach For `github scan`

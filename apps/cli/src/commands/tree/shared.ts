@@ -113,11 +113,24 @@ export function slugifyToken(text: string): string {
 }
 
 export function runCommand(command: string, args: string[], cwd: string): string {
+  const env = { ...process.env };
+  for (const key of [
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_DIR",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_PREFIX",
+    "GIT_WORK_TREE",
+  ]) {
+    delete env[key];
+  }
+
   return execFileSync(command, args, {
     cwd,
     encoding: "utf-8",
     env: {
-      ...process.env,
+      ...env,
       GIT_TERMINAL_PROMPT: "0",
     },
     stdio: ["ignore", "pipe", "pipe"],

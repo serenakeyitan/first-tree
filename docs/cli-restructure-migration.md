@@ -28,7 +28,8 @@ GitHub inbox / automation runtime previously described as `breeze`.
 | `tree help onboarding`                                                     | implemented as the current onboarding narrative                                                           |
 | `tree bind` / `integrate` / `workspace sync` / `verify`                    | implemented in `apps/cli`                                                                                 |
 | `tree generate-codeowners` / `install-claude-code-hook` / `inject-context` | implemented in `apps/cli`                                                                                 |
-| `tree init` / `bootstrap` / `upgrade` / `publish` / `review`               | still placeholder / port-back work                                                                        |
+| `tree init` / `bootstrap` / `publish`                                      | implemented in `apps/cli`                                                                                 |
+| `tree upgrade` / `review`                                                  | still placeholder / port-back work                                                                        |
 | `tree skill ...`                                                           | implemented for install, upgrade, list, doctor, and link against the canonical shipped `skills/` payloads |
 | `github scan ...`                                                          | implemented by wiring the public CLI to `packages/github-scan`                                            |
 | `hub ...`                                                                  | stub namespace only                                                                                       |
@@ -69,8 +70,7 @@ The following commands remain diagnosable without a binding:
 
 The biggest gaps between this workspace and the historical main branch are:
 
-1. restore the remaining tree engine behind `init`, `bootstrap`, `upgrade`,
-   `publish`, and `review`
+1. restore the remaining tree engine behind `upgrade` and `review`
 2. finish wiring the shipped `first-tree-sync` and `first-tree-write` skills as the old gardener logic replacement
 3. update release notes and operational docs once the runtime behavior matches
    the new public command surface

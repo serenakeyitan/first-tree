@@ -120,16 +120,34 @@ describe("first-tree CLI", () => {
     expect(result.stdout).toContain("github scan");
   });
 
-  it("runs tree placeholder commands successfully", async () => {
-    const initResult = await runCli(["tree", "init"]);
-    const workspaceResult = await runCli(["tree", "workspace", "sync"]);
+  it("reports a missing shared tree for workspace sync", async () => {
+    const workspaceRoot = await mkdtemp(resolve(tmpdir(), "first-tree-workspace-missing-"));
+    const repoA = resolve(workspaceRoot, "repo-a");
+    const repoB = resolve(workspaceRoot, "repo-b");
+    await mkdir(repoA, { recursive: true });
+    await mkdir(repoB, { recursive: true });
+    await writeFile(resolve(repoA, ".git"), "gitdir: /tmp/repo-a\n");
+    await writeFile(resolve(repoB, ".git"), "gitdir: /tmp/repo-b\n");
 
-    expect(initResult.code).toBe(0);
-    expect(initResult.stdout.trim()).toBe("first-tree tree init is not implemented yet.");
+    const workspaceResult = await runCli(["tree", "workspace", "sync"], { cwd: workspaceRoot });
+
     expect(workspaceResult.code).toBe(1);
     expect(workspaceResult.stdout).toBe("");
     expect(workspaceResult.stderr).toContain(
       "Could not resolve the shared tree for this workspace.",
+    );
+  });
+
+  it("bootstraps a tree repo checkout", async () => {
+    const treeRoot = await mkdtemp(resolve(tmpdir(), "first-tree-bootstrap-"));
+    const result = await runCli(["tree", "bootstrap", "--tree-path", treeRoot]);
+
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("Context Tree Bootstrap");
+    expect(await readFile(resolve(treeRoot, "NODE.md"), "utf8")).toContain("# Context Tree");
+    expect(await readFile(resolve(treeRoot, ".first-tree", "tree.json"), "utf8")).toContain(
+      '"treeRepoName"',
     );
   });
 
