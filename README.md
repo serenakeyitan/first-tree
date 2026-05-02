@@ -78,7 +78,7 @@ Canonical shipped skills in the current proposal:
 | **`first-tree tree`**        | The Context Tree layer. This is where onboarding, inspection, validation, publishing, and skill maintenance live. | `inspect`, `status`, and `help onboarding` are wired. The rest of the proposal surface is present as scaffolding while the old tree runtime is ported back.                        |
 | **`first-tree github scan`** | The GitHub inbox runtime. This is the new public home for the old `breeze` behavior.                              | Fully wired to [`packages/github-scan/`](./packages/github-scan/README.md), with fail-closed tree binding checks at the CLI entry and the tree repo handed through to the runtime. |
 | **`first-tree hub`**         | Reserved namespace for future Hub integration.                                                                    | Stub commands only in this workspace snapshot.                                                                                                                                     |
-| **`skills/`**                | Canonical skill payload source for the proposal's five shipped skills.                                            | Present in this repo and copied into the built package. `first-tree tree skill ...` still needs to be restored so install/list/doctor/link become real commands.                   |
+| **`skills/`**                | Canonical skill payload source for the proposal's five shipped skills.                                            | Present in this repo and copied into the built package. `first-tree tree skill ...` now installs, upgrades, lists, diagnoses, and repairs these canonical payloads.                |
 
 ## Why first-tree
 
@@ -156,24 +156,24 @@ use today and which ones require an existing tree binding.
 
 ### `first-tree tree`
 
-| Command                                    | What it does                                                  | Status                                                                |
-| ------------------------------------------ | ------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `first-tree tree inspect`                  | Classify the current folder and report first-tree metadata    | implemented                                                           |
-| `first-tree tree status`                   | Human-friendly alias for `inspect`                            | implemented                                                           |
-| `first-tree tree help onboarding`          | Print the current onboarding narrative                        | implemented                                                           |
-| `first-tree tree init`                     | Proposal-aligned onboarding entrypoint                        | placeholder while the old engine is ported back                       |
-| `first-tree tree bootstrap`                | Low-level tree bootstrap for an explicit tree checkout        | placeholder                                                           |
-| `first-tree tree bind`                     | Bind a source repo or workspace to an existing tree repo      | placeholder                                                           |
-| `first-tree tree integrate`                | Install local tree integration without mutating the tree repo | placeholder                                                           |
-| `first-tree tree workspace sync`           | Bind newly added child repos to the shared tree               | placeholder                                                           |
-| `first-tree tree verify`                   | Validate a tree repo                                          | placeholder                                                           |
-| `first-tree tree upgrade`                  | Refresh integration and tree metadata                         | placeholder                                                           |
-| `first-tree tree publish`                  | Publish a tree repo and refresh bound repos                   | placeholder                                                           |
-| `first-tree tree generate-codeowners`      | Generate `.github/CODEOWNERS` from ownership data             | placeholder                                                           |
-| `first-tree tree install-claude-code-hook` | Install the Claude Code hook wiring                           | placeholder                                                           |
-| `first-tree tree inject-context`           | Emit the SessionStart payload from `NODE.md`                  | placeholder                                                           |
-| `first-tree tree review`                   | Run the tree PR review helper                                 | placeholder                                                           |
-| `first-tree tree skill <subcommand>`       | Proposal replacement for the old top-level `skill` namespace  | canonical payloads exist; command implementation is still placeholder |
+| Command                                    | What it does                                                  | Status                                                   |
+| ------------------------------------------ | ------------------------------------------------------------- | -------------------------------------------------------- |
+| `first-tree tree inspect`                  | Classify the current folder and report first-tree metadata    | implemented                                              |
+| `first-tree tree status`                   | Human-friendly alias for `inspect`                            | implemented                                              |
+| `first-tree tree help onboarding`          | Print the current onboarding narrative                        | implemented                                              |
+| `first-tree tree init`                     | Proposal-aligned onboarding entrypoint                        | placeholder while the old engine is ported back          |
+| `first-tree tree bootstrap`                | Low-level tree bootstrap for an explicit tree checkout        | placeholder                                              |
+| `first-tree tree bind`                     | Bind a source repo or workspace to an existing tree repo      | placeholder                                              |
+| `first-tree tree integrate`                | Install local tree integration without mutating the tree repo | placeholder                                              |
+| `first-tree tree workspace sync`           | Bind newly added child repos to the shared tree               | placeholder                                              |
+| `first-tree tree verify`                   | Validate a tree repo                                          | placeholder                                              |
+| `first-tree tree upgrade`                  | Refresh integration and tree metadata                         | placeholder                                              |
+| `first-tree tree publish`                  | Publish a tree repo and refresh bound repos                   | placeholder                                              |
+| `first-tree tree generate-codeowners`      | Generate `.github/CODEOWNERS` from ownership data             | placeholder                                              |
+| `first-tree tree install-claude-code-hook` | Install the Claude Code hook wiring                           | placeholder                                              |
+| `first-tree tree inject-context`           | Emit the SessionStart payload from `NODE.md`                  | placeholder                                              |
+| `first-tree tree review`                   | Run the tree PR review helper                                 | placeholder                                              |
+| `first-tree tree skill <subcommand>`       | Proposal replacement for the old top-level `skill` namespace  | implemented for install, upgrade, list, doctor, and link |
 
 ### `first-tree github scan`
 

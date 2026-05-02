@@ -122,17 +122,37 @@ describe("first-tree CLI", () => {
 
   it("runs tree placeholder commands successfully", async () => {
     const initResult = await runCli(["tree", "init"]);
-    const skillResult = await runCli(["tree", "skill", "install"]);
     const workspaceResult = await runCli(["tree", "workspace", "sync"]);
 
     expect(initResult.code).toBe(0);
     expect(initResult.stdout.trim()).toBe("first-tree tree init is not implemented yet.");
-    expect(skillResult.code).toBe(0);
-    expect(skillResult.stdout.trim()).toBe("first-tree tree skill install is not implemented yet.");
     expect(workspaceResult.code).toBe(0);
     expect(workspaceResult.stdout.trim()).toBe(
       "first-tree tree workspace sync is not implemented yet.",
     );
+  });
+
+  it("installs and inspects shipped skills through `tree skill` commands", async () => {
+    const root = await mkdtemp(resolve(tmpdir(), "first-tree-skill-install-"));
+
+    const installResult = await runCli(["tree", "skill", "install", "--root", root]);
+    const listResult = await runCli(["tree", "skill", "list", "--root", root]);
+    const doctorResult = await runCli(["tree", "skill", "doctor", "--root", root]);
+    const linkResult = await runCli(["tree", "skill", "link", "--root", root]);
+
+    expect(installResult.code).toBe(0);
+    expect(installResult.stdout).toContain("Installed 5 shipped first-tree skills");
+
+    expect(listResult.code).toBe(0);
+    expect(listResult.stdout).toContain("first-tree-onboarding");
+    expect(listResult.stdout).toContain("installed");
+
+    expect(doctorResult.code).toBe(0);
+    expect(doctorResult.stdout).toContain("OK first-tree");
+    expect(doctorResult.stdout).toContain("OK first-tree-github-scan");
+
+    expect(linkResult.code).toBe(0);
+    expect(linkResult.stdout).toContain("Linked");
   });
 
   it("runs bare `github scan` and prints help with exit 0", async () => {

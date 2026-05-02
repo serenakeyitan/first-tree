@@ -6,6 +6,7 @@ import { registerCommandGroup, registerSubcommands } from "../groups.js";
 import { generateCodeownersCommand } from "./generate-codeowners.js";
 import { inspectCommand } from "./inspect.js";
 import { installClaudeCodeHookCommand } from "./install-claude-code-hook.js";
+import { skillSubcommands } from "./skill.js";
 import { statusCommand } from "./status.js";
 
 type CommandWithUnknownCommand = Command & {
@@ -106,33 +107,12 @@ export const treeCommand: CommandModule = {
       }),
     ]);
 
-    registerCommandGroup(command, "skill", "Install and repair first-tree skill payloads.", [
-      createPlaceholderSubcommand({
-        name: "install",
-        description: "Install shipped first-tree skills into local agent directories.",
-        message: "first-tree tree skill install is not implemented yet.",
-      }),
-      createPlaceholderSubcommand({
-        name: "upgrade",
-        description: "Reinstall shipped first-tree skills from the current package.",
-        message: "first-tree tree skill upgrade is not implemented yet.",
-      }),
-      createPlaceholderSubcommand({
-        name: "list",
-        description: "List the installed first-tree skill payloads and versions.",
-        message: "first-tree tree skill list is not implemented yet.",
-      }),
-      createPlaceholderSubcommand({
-        name: "doctor",
-        description: "Diagnose first-tree skill installation health.",
-        message: "first-tree tree skill doctor is not implemented yet.",
-      }),
-      createPlaceholderSubcommand({
-        name: "link",
-        description: "Repair .claude skill aliases that point to .agents skills.",
-        message: "first-tree tree skill link is not implemented yet.",
-      }),
-    ]);
+    registerCommandGroup(
+      command,
+      "skill",
+      "Install and repair first-tree skill payloads.",
+      skillSubcommands,
+    );
 
     registerCommandGroup(command, "help", "Show Context Tree help topics.", [
       {

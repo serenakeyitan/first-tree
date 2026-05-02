@@ -25,4 +25,5 @@ export type SubcommandModule = {
   summary: string;
   description: string;
   action: CommandAction;
+  configure?: (command: Command) => void;
 };

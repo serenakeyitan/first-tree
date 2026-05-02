@@ -64,10 +64,6 @@ const commandMessages: Array<{
     message: "first-tree tree workspace sync is not implemented yet.",
   },
   {
-    args: ["tree", "skill", "install"],
-    message: "first-tree tree skill install is not implemented yet.",
-  },
-  {
     args: ["hub", "start"],
     message: "first-tree hub start is not implemented yet.",
   },
@@ -588,5 +584,65 @@ describe("first-tree program", () => {
     await main(["node", "first-tree", "tree", "help", "onboarding"]);
 
     expect(log).toHaveBeenCalledWith(expect.stringContaining("first-tree tree help onboarding"));
+  });
+
+  it("installs shipped skills and lists them with json output", async () => {
+    const root = makeTempDir();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const installResult = await runProgram(
+      ["tree", "skill", "install", "--root", root],
+      "0.0.0-test",
+    );
+    const listResult = await runProgram(
+      ["--json", "tree", "skill", "list", "--root", root],
+      "0.0.0-test",
+    );
+
+    expect(installResult.code).toBe(0);
+    expect(listResult.code).toBe(0);
+    expect(String(log.mock.calls[0]?.[0])).toContain("Installed 5 shipped first-tree skills");
+    expect(String(log.mock.calls[1]?.[0])).toContain('"name": "first-tree"');
+    expect(String(log.mock.calls[1]?.[0])).toContain('"name": "first-tree-onboarding"');
+    expect(String(log.mock.calls[1]?.[0])).toContain('"installed": true');
+  });
+
+  it("reports doctor failures before install and success after install", async () => {
+    const root = makeTempDir();
+    const previousExitCode = process.exitCode;
+    process.exitCode = 0;
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      const failingDoctorResult = await runProgram(
+        ["tree", "skill", "doctor", "--root", root],
+        "0.0.0-test",
+      );
+
+      expect(failingDoctorResult.code).toBe(0);
+      expect(
+        log.mock.calls.some((call) =>
+          String(call[0]).includes("=== first-tree tree skill doctor ==="),
+        ),
+      ).toBe(true);
+      expect(log.mock.calls.some((call) => String(call[0]).includes("FAIL first-tree"))).toBe(true);
+      expect(process.exitCode).toBe(1);
+
+      process.exitCode = 0;
+
+      const installResult = await runProgram(
+        ["tree", "skill", "install", "--root", root],
+        "0.0.0-test",
+      );
+      const passingDoctorResult = await runProgram(
+        ["tree", "skill", "doctor", "--root", root],
+        "0.0.0-test",
+      );
+
+      expect(installResult.code).toBe(0);
+      expect(passingDoctorResult.code).toBe(0);
+      expect(log.mock.calls.some((call) => String(call[0]).includes("OK first-tree"))).toBe(true);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
   });
 });

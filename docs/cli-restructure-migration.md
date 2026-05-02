@@ -22,15 +22,15 @@ GitHub inbox / automation runtime previously described as `breeze`.
 
 ## Current Workspace Status
 
-| Surface                                | Current state                                                            |
-| -------------------------------------- | ------------------------------------------------------------------------ |
-| `tree inspect` / `tree status`         | implemented in `apps/cli`                                                |
-| `tree help onboarding`                 | implemented as the current onboarding narrative                          |
-| `tree init/bind/bootstrap/...`         | proposal-aligned public scaffolding; engine still needs port-back work   |
-| `tree skill ...`                       | proposal-aligned public scaffolding; shipped skills are not restored yet |
-| `github scan ...`                      | implemented by wiring the public CLI to `packages/github-scan`           |
-| `hub ...`                              | stub namespace only                                                      |
-| `first-tree-sync` / `first-tree-write` | canonical gardener-logic replacement skills are now the target shape     |
+| Surface                                | Current state                                                                                             |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `tree inspect` / `tree status`         | implemented in `apps/cli`                                                                                 |
+| `tree help onboarding`                 | implemented as the current onboarding narrative                                                           |
+| `tree init/bind/bootstrap/...`         | proposal-aligned public scaffolding; engine still needs port-back work                                    |
+| `tree skill ...`                       | implemented for install, upgrade, list, doctor, and link against the canonical shipped `skills/` payloads |
+| `github scan ...`                      | implemented by wiring the public CLI to `packages/github-scan`                                            |
+| `hub ...`                              | stub namespace only                                                                                       |
+| `first-tree-sync` / `first-tree-write` | canonical gardener-logic replacement skills are now the target shape                                      |
 
 ## GitHub Scan Binding Contract
 
@@ -69,9 +69,8 @@ The biggest gaps between this workspace and the historical main branch are:
 
 1. restore the tree engine behind `init`, `bind`, `bootstrap`, `integrate`,
    `workspace sync`, `verify`, `upgrade`, `publish`, `inject-context`, and `review`
-2. restore shipped skill payloads so `first-tree tree skill ...` can become real
-3. finish wiring the shipped `first-tree-sync` and `first-tree-write` skills as the old gardener logic replacement
-4. update release notes and operational docs once the runtime behavior matches
+2. finish wiring the shipped `first-tree-sync` and `first-tree-write` skills as the old gardener logic replacement
+3. update release notes and operational docs once the runtime behavior matches
    the new public command surface
 
 ## Contributor Rule Of Thumb

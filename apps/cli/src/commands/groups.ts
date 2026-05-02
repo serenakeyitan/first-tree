@@ -24,6 +24,8 @@ export function registerSubcommands(command: Command, subcommands: SubcommandMod
       .showHelpAfterError(true)
       .showSuggestionAfterError(true)
       .action(withCommandContext(subcommand.action));
+
+    subcommand.configure?.(childCommand);
   }
 }
 
