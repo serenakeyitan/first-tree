@@ -1,9 +1,16 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 import type { CommandContext, SubcommandModule } from "../types.js";
 
 type InspectClassification = "tree-repo" | "workspace-root" | "source-repo" | "git-repo" | "folder";
+type InspectRole =
+  | "tree-repo"
+  | "workspace-root-bound"
+  | "source-repo-bound"
+  | "unbound-workspace-root"
+  | "unbound-source-repo"
+  | "unknown";
 
 type BindingSummary = {
   bindingMode?: string;
@@ -21,6 +28,7 @@ export type InspectResult = {
   cwd: string;
   hasMembersNode: boolean;
   hasNode: boolean;
+  role: InspectRole;
   rootKind: "git-repo" | "folder";
   rootPath: string;
   sourceStatePath?: string;
@@ -128,11 +136,113 @@ function readTreeRepoName(treeStatePath: string | undefined): string | undefined
   return asString(parsed.treeRepoName);
 }
 
+function looksLikeWorkspaceRoot(rootPath: string): boolean {
+  try {
+    const entries = readdirSync(rootPath, { withFileTypes: true });
+    let repoCount = 0;
+
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name.startsWith(".")) {
+        continue;
+      }
+
+      if (existsSync(join(rootPath, entry.name, ".git"))) {
+        repoCount += 1;
+      }
+
+      if (repoCount >= 2) {
+        return true;
+      }
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
+}
+
+function resolveInspectRootPath(
+  cwd: string,
+  sourceStatePath: string | undefined,
+  treeStatePath: string | undefined,
+  gitMarkerPath: string | undefined,
+): string {
+  if (sourceStatePath !== undefined) {
+    return dirname(dirname(sourceStatePath));
+  }
+
+  if (treeStatePath !== undefined) {
+    return dirname(dirname(treeStatePath));
+  }
+
+  if (gitMarkerPath !== undefined) {
+    return dirname(gitMarkerPath);
+  }
+
+  return resolve(cwd);
+}
+
+function deriveClassification(
+  treeStatePath: string | undefined,
+  hasNode: boolean,
+  hasMembersNode: boolean,
+  binding: BindingSummary | undefined,
+  sourceStatePath: string | undefined,
+  gitMarkerPath: string | undefined,
+): InspectClassification {
+  if (treeStatePath !== undefined || (hasNode && hasMembersNode)) {
+    return "tree-repo";
+  }
+
+  if (binding?.bindingMode === "workspace-root" || binding?.scope === "workspace") {
+    return "workspace-root";
+  }
+
+  if (sourceStatePath !== undefined) {
+    return "source-repo";
+  }
+
+  if (gitMarkerPath !== undefined) {
+    return "git-repo";
+  }
+
+  return "folder";
+}
+
+function deriveRole(
+  classification: InspectClassification,
+  workspaceLikeRoot: boolean,
+  gitMarkerPath: string | undefined,
+): InspectRole {
+  if (classification === "tree-repo") {
+    return "tree-repo";
+  }
+
+  if (classification === "workspace-root") {
+    return "workspace-root-bound";
+  }
+
+  if (classification === "source-repo") {
+    return "source-repo-bound";
+  }
+
+  if (workspaceLikeRoot) {
+    return "unbound-workspace-root";
+  }
+
+  if (gitMarkerPath !== undefined) {
+    return "unbound-source-repo";
+  }
+
+  return "unknown";
+}
+
 function formatInspectResult(result: InspectResult): string {
   const lines = [
     "first-tree tree inspect",
     `cwd: ${result.cwd}`,
     `root: ${result.rootPath}`,
+    `role: ${result.role}`,
     `classification: ${result.classification}`,
     `root kind: ${result.rootKind}`,
   ];
@@ -186,29 +296,22 @@ export function inspectCurrentWorkingTree(cwd = process.cwd()): InspectResult {
   const sourceStatePath = findUpwards(cwd, ".first-tree/source.json");
   const treeStatePath = findUpwards(cwd, ".first-tree/tree.json");
   const gitMarkerPath = findUpwards(cwd, ".git");
-  const rootPath =
-    sourceStatePath !== undefined
-      ? dirname(dirname(sourceStatePath))
-      : treeStatePath !== undefined
-        ? dirname(dirname(treeStatePath))
-        : gitMarkerPath !== undefined
-          ? dirname(gitMarkerPath)
-          : resolve(cwd);
+  const rootPath = resolveInspectRootPath(cwd, sourceStatePath, treeStatePath, gitMarkerPath);
   const binding = readBindingSummary(sourceStatePath);
   const hasNode = existsSync(join(rootPath, "NODE.md"));
   const hasMembersNode = existsSync(join(rootPath, "members", "NODE.md"));
   const treeRepoName = readTreeRepoName(treeStatePath);
+  const workspaceLikeRoot = looksLikeWorkspaceRoot(rootPath);
 
-  const classification: InspectClassification =
-    treeStatePath !== undefined || (hasNode && hasMembersNode)
-      ? "tree-repo"
-      : binding?.bindingMode === "workspace-root" || binding?.scope === "workspace"
-        ? "workspace-root"
-        : sourceStatePath !== undefined
-          ? "source-repo"
-          : gitMarkerPath !== undefined
-            ? "git-repo"
-            : "folder";
+  const classification = deriveClassification(
+    treeStatePath,
+    hasNode,
+    hasMembersNode,
+    binding,
+    sourceStatePath,
+    gitMarkerPath,
+  );
+  const role = deriveRole(classification, workspaceLikeRoot, gitMarkerPath);
 
   return {
     binding: binding ?? (treeRepoName !== undefined ? { treeRepoName } : undefined),
@@ -216,6 +319,7 @@ export function inspectCurrentWorkingTree(cwd = process.cwd()): InspectResult {
     cwd: resolve(cwd),
     hasMembersNode,
     hasNode,
+    role,
     rootKind: gitMarkerPath !== undefined ? "git-repo" : "folder",
     rootPath,
     sourceStatePath,

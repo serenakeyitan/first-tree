@@ -9,6 +9,9 @@ The restructured CLI is centered on three ideas:
 ## Recommended Flow
 
 1. Run `first-tree tree inspect --json` from the folder you want to onboard.
+   The proposal-aligned `role` values are:
+   `tree-repo`, `workspace-root-bound`, `source-repo-bound`,
+   `unbound-workspace-root`, `unbound-source-repo`, and `unknown`.
 2. Decide whether you are creating a new dedicated tree repo or joining an
    existing shared tree.
 3. Use `first-tree tree init` as the high-level entrypoint once the tree engine

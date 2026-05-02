@@ -110,8 +110,22 @@ describe("inspectCurrentWorkingTree", () => {
     const result = inspectCurrentWorkingTree(root);
 
     expect(result.classification).toBe("folder");
+    expect(result.role).toBe("unknown");
     expect(result.rootKind).toBe("folder");
     expect(result.rootPath).toBe(root);
+  });
+
+  it("classifies an unbound workspace-like folder via role", () => {
+    const root = makeTempDir();
+    mkdirSync(join(root, "repo-a"));
+    mkdirSync(join(root, "repo-b"));
+    writeFileSync(join(root, "repo-a", ".git"), "gitdir: /tmp/a\n");
+    writeFileSync(join(root, "repo-b", ".git"), "gitdir: /tmp/b\n");
+
+    const result = inspectCurrentWorkingTree(root);
+
+    expect(result.classification).toBe("folder");
+    expect(result.role).toBe("unbound-workspace-root");
   });
 
   it("classifies a workspace root from source binding metadata", () => {
@@ -131,6 +145,7 @@ describe("inspectCurrentWorkingTree", () => {
     const result = inspectCurrentWorkingTree(root);
 
     expect(result.classification).toBe("workspace-root");
+    expect(result.role).toBe("workspace-root-bound");
     expect(result.binding?.treeRepo).toBe("acme/context");
     expect(result.binding?.treeEntrypoint).toBe("members/platform");
     expect(result.binding?.treeMode).toBe("shared");
@@ -150,6 +165,7 @@ describe("inspectCurrentWorkingTree", () => {
     const result = inspectCurrentWorkingTree(root);
 
     expect(result.classification).toBe("tree-repo");
+    expect(result.role).toBe("tree-repo");
     expect(result.binding?.treeRepoName).toBe("first-tree-context");
     expect(result.treeStatePath).toBe(join(root, ".first-tree", "tree.json"));
   });
@@ -187,6 +203,7 @@ describe("runInspectCommand", () => {
     runInspectCommand(baseContext);
 
     expect(log).toHaveBeenCalledOnce();
+    expect(String(log.mock.calls[0]?.[0])).toContain("role: source-repo-bound");
     expect(String(log.mock.calls[0]?.[0])).toContain("classification: source-repo");
     expect(String(log.mock.calls[0]?.[0])).toContain("tree repo: acme/context");
     expect(String(log.mock.calls[0]?.[0])).toContain("tree entrypoint: .");
@@ -214,6 +231,7 @@ describe("runInspectCommand", () => {
     });
 
     expect(log).toHaveBeenCalledOnce();
+    expect(String(log.mock.calls[0]?.[0])).toContain('"role": "tree-repo"');
     expect(String(log.mock.calls[0]?.[0])).toContain('"classification": "tree-repo"');
   });
 
