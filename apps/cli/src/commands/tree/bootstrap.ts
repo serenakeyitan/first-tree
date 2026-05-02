@@ -17,8 +17,11 @@ import { syncTreeSourceRepoIndex } from "./source-repo-index.js";
 import { ensureWhitepaperSymlink, upsertLocalTreeGitIgnore } from "./source-integration.js";
 import { isGitRepoRoot, repoNameForRoot, runCommand } from "./shared.js";
 import {
+  renderCodeReviewerAgentTemplate,
+  renderDeveloperAgentTemplate,
   renderDefaultMemberNode,
   renderMembersDomainNode,
+  renderOrgConfigPlaceholder,
   renderRootNode,
   renderTreeAgentsInstructions,
   renderTreeProgress,
@@ -106,6 +109,15 @@ export function bootstrapTreeRoot(
   ensureClaudeSymlink(targetRoot);
   writeIfMissing(join(targetRoot, "members", "NODE.md"), renderMembersDomainNode());
   writeIfMissing(join(targetRoot, "members", "owner", "NODE.md"), renderDefaultMemberNode());
+  writeIfMissing(
+    join(targetRoot, ".first-tree", "agent-templates", "developer.yaml"),
+    renderDeveloperAgentTemplate(),
+  );
+  writeIfMissing(
+    join(targetRoot, ".first-tree", "agent-templates", "code-reviewer.yaml"),
+    renderCodeReviewerAgentTemplate(),
+  );
+  writeIfMissing(join(targetRoot, ".first-tree", "org.yaml"), renderOrgConfigPlaceholder());
   writeIfMissing(join(targetRoot, TREE_VERSION_FILE), "0.4.0-alpha.1");
   writeIfMissing(join(targetRoot, TREE_PROGRESS_FILE), renderTreeProgress());
   mkdirSync(join(targetRoot, TREE_BINDINGS_DIR), { recursive: true });

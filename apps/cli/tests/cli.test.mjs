@@ -149,6 +149,18 @@ describe("first-tree CLI", () => {
     expect(await readFile(resolve(treeRoot, ".first-tree", "tree.json"), "utf8")).toContain(
       '"treeRepoName"',
     );
+    expect(
+      await readFile(resolve(treeRoot, ".first-tree", "agent-templates", "developer.yaml"), "utf8"),
+    ).toContain("name: developer");
+    expect(
+      await readFile(
+        resolve(treeRoot, ".first-tree", "agent-templates", "code-reviewer.yaml"),
+        "utf8",
+      ),
+    ).toContain("name: code-reviewer");
+    expect(await readFile(resolve(treeRoot, ".first-tree", "org.yaml"), "utf8")).toContain(
+      "humanInvolveRules:",
+    );
   });
 
   it("binds a source repo to a tree repo", async () => {

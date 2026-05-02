@@ -57,6 +57,74 @@ export function renderDefaultMemberNode(memberTitle = "Owner"): string {
   ].join("\n");
 }
 
+export function renderDeveloperAgentTemplate(): string {
+  return [
+    "name: developer",
+    "prompt: |",
+    "  Default First Tree developer agent.",
+    "  Use First Tree context before changing cross-repo decisions or ownership.",
+    "skills:",
+    "  - .agents/skills/first-tree",
+    "  - .agents/skills/first-tree-sync",
+    "  - .agents/skills/first-tree-write",
+    "  - .agents/skills/first-tree-github-scan",
+    "runtime: codex",
+    "workspace:",
+    "  kind: worktree",
+    "env: {}",
+    "auth:",
+    "  github:",
+    "    provider: env",
+    "    variable: GITHUB_TOKEN",
+    "mcp: []",
+    "",
+  ].join("\n");
+}
+
+export function renderCodeReviewerAgentTemplate(): string {
+  return [
+    "name: code-reviewer",
+    "prompt: |",
+    "  Default First Tree code review agent.",
+    "  Focus on review quality, tree implications, and when human escalation is required.",
+    "skills:",
+    "  - .agents/skills/first-tree",
+    "  - .agents/skills/first-tree-sync",
+    "  - .agents/skills/first-tree-write",
+    "  - .agents/skills/first-tree-github-scan",
+    "runtime: codex",
+    "workspace:",
+    "  kind: worktree",
+    "env: {}",
+    "auth:",
+    "  github:",
+    "    provider: env",
+    "    variable: GITHUB_TOKEN",
+    "mcp: []",
+    "",
+  ].join("\n");
+}
+
+export function renderOrgConfigPlaceholder(): string {
+  return [
+    "agents: []",
+    "collaboration:",
+    "  routing: []",
+    "  review: []",
+    "humanInvolveRules:",
+    "  defaults:",
+    "    - missing-owner",
+    "    - cross-domain-impact",
+    "    - unknown-decision",
+    "companyContext:",
+    '  industry: ""',
+    '  stage: ""',
+    "  techStackConstraints: []",
+    "  culture: []",
+    "",
+  ].join("\n");
+}
+
 export function renderTreeAgentsInstructions(): string {
   return [
     "<!-- BEGIN CONTEXT-TREE FRAMEWORK — do not edit this section -->",
@@ -105,6 +173,7 @@ export function renderTreeProgress(): string {
     "",
     "- [x] Bootstrap the tree scaffolding",
     "- [x] Install first-tree skills and baseline instructions",
+    "- [x] Scaffold default agent templates and org config",
     "",
   ].join("\n");
 }

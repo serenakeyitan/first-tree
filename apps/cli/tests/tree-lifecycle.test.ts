@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -104,6 +104,21 @@ describe("initializeSourceRoot", () => {
       expect(summary.bindingMode).toBe("standalone-source");
       expect(summary.treeRoot).toBe(
         resolve(dirname(sourceRoot), `${sourceRoot.split("/").pop()}-tree`),
+      );
+      expect(
+        readFileSync(
+          join(summary.treeRoot, ".first-tree", "agent-templates", "developer.yaml"),
+          "utf8",
+        ),
+      ).toContain("name: developer");
+      expect(
+        readFileSync(
+          join(summary.treeRoot, ".first-tree", "agent-templates", "code-reviewer.yaml"),
+          "utf8",
+        ),
+      ).toContain("name: code-reviewer");
+      expect(readFileSync(join(summary.treeRoot, ".first-tree", "org.yaml"), "utf8")).toContain(
+        "humanInvolveRules:",
       );
     } finally {
       process.chdir(previousCwd);
