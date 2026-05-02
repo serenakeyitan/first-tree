@@ -116,9 +116,7 @@ export async function executeAgent(
   const promptPath = join(request.taskDir, "prompt.txt");
   const outputPath = join(request.taskDir, "runner-output.txt");
   const liveOutputPath =
-    spec.kind === "codex"
-      ? join(request.taskDir, "runner-last-message.txt")
-      : outputPath;
+    spec.kind === "codex" ? join(request.taskDir, "runner-last-message.txt") : outputPath;
   const stdoutPath = join(request.taskDir, "runner-stdout.log");
   const stderrPath = join(request.taskDir, "runner-stderr.log");
 
@@ -146,21 +144,15 @@ export async function executeAgent(
   // runner-output.txt so parse_result can find the final GITHUB_SCAN_RESULT
   // line consistently.
   if (spec.kind === "claude") {
-    const stdout = existsSync(stdoutPath)
-      ? readFileSync(stdoutPath, "utf8")
-      : "";
+    const stdout = existsSync(stdoutPath) ? readFileSync(stdoutPath, "utf8") : "";
     writeFileSync(outputPath, stdout);
   }
 
   if (statusCode !== 0) {
-    throw new Error(
-      `${spec.kind} agent exited with status ${statusCode ?? "unknown"}`,
-    );
+    throw new Error(`${spec.kind} agent exited with status ${statusCode ?? "unknown"}`);
   }
 
-  const response = existsSync(outputPath)
-    ? readFileSync(outputPath, "utf8")
-    : "";
+  const response = existsSync(outputPath) ? readFileSync(outputPath, "utf8") : "";
   const { status, summary } = parseResult(response);
   return { status, summary, outputPath };
 }
@@ -168,9 +160,7 @@ export async function executeAgent(
 export function buildPrompt(request: AgentRequest): string {
   const task = request.task;
   const workingRepoLine =
-    task.workspaceRepo !== task.repo
-      ? `- Working repository: ${task.workspaceRepo}\n`
-      : "";
+    task.workspaceRepo !== task.repo ? `- Working repository: ${task.workspaceRepo}\n` : "";
   return (
     `You are responding to a GitHub notification on behalf of ${request.identity.login}.\n` +
     `\n` +
@@ -206,6 +196,8 @@ export function buildPrompt(request: AgentRequest): string {
     `  gh issue edit <number> --repo <owner>/<repo> --add-label "github-scan:<status>"\n` +
     `  gh pr edit   <number> --repo <owner>/<repo> --add-label "github-scan:<status>"\n` +
     `Remove any previous \`github-scan:*\` label when the status changes so only one \`github-scan:*\` label remains on the item. Set \`github-scan:wip\` as soon as you start real work, and set \`github-scan:done\` or \`github-scan:human\` before you stop.\n` +
+    `\n` +
+    `Note on \`github-scan:human\` (issue #358): the daemon auto-reverts \`github-scan:human\` → \`new\` when a human (anyone other than ${request.identity.login}) posts a comment longer than 20 characters after the label was applied. Reactions alone do not trigger this. So when you set \`github-scan:human\`, you can stop and trust that the next human reply will pull the item back into the queue automatically.\n` +
     `\n` +
     `If you post a public GitHub reply, review, or comment, include this exact disclosure sentence once: ${request.disclosureText}\n` +
     `If the task asks for an exact public reply string, preserve that requested string exactly in one public GitHub reply. If the disclosure would change the exact wording, post the disclosure separately in another public comment or review note instead of altering the exact requested string.\n` +
@@ -246,9 +238,7 @@ export function parseResult(output: string): {
     })();
     return { status, summary };
   }
-  const nonEmpty = lines
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0);
+  const nonEmpty = lines.map((l) => l.trim()).filter((l) => l.length > 0);
   const summary = nonEmpty[nonEmpty.length - 1] ?? "completed";
   return { status: "handled", summary };
 }
@@ -264,9 +254,7 @@ export class AgentPool {
 
   constructor(agents: readonly AgentSpec[]) {
     if (agents.length === 0) {
-      throw new Error(
-        "no configured agent binary is available in PATH (need codex and/or claude)",
-      );
+      throw new Error("no configured agent binary is available in PATH (need codex and/or claude)");
     }
     this.agents = agents;
   }
@@ -322,9 +310,7 @@ export const defaultAgentSpawner: AgentSpawner = async ({
   return new Promise((resolve, reject) => {
     child.on("error", reject);
     child.on("close", (code) => {
-      closeStreams([stdout, stderr]).then(() =>
-        resolve({ statusCode: code }),
-      );
+      closeStreams([stdout, stderr]).then(() => resolve({ statusCode: code }));
     });
   });
 };
@@ -357,9 +343,7 @@ export function buildCommand(args: {
   return { cmd: "claude", args: argv, cwd: request.workspaceDir };
 }
 
-export function buildAgentEnv(
-  request: AgentRequest,
-): NodeJS.ProcessEnv {
+export function buildAgentEnv(request: AgentRequest): NodeJS.ProcessEnv {
   const existingPath = process.env.PATH ?? "";
   return {
     ...process.env,
@@ -367,9 +351,7 @@ export function buildAgentEnv(
     GITHUB_SCAN_BROKER_DIR: request.ghBrokerDir,
     GITHUB_SCAN_SNAPSHOT_DIR: request.snapshotDir,
     GITHUB_SCAN_TASK_DIR: request.taskDir,
-    ...(request.treeRepo
-      ? { [GITHUB_SCAN_TREE_REPO_ENV]: request.treeRepo }
-      : {}),
+    ...(request.treeRepo ? { [GITHUB_SCAN_TREE_REPO_ENV]: request.treeRepo } : {}),
   };
 }
 

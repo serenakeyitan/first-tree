@@ -39,6 +39,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 
 import { appendActivityEvent } from "../runtime/activity-log.js";
+import { autoRevertHumanLabels } from "../runtime/auto-revert.js";
 import { GhClient, GhExecError } from "../runtime/gh.js";
 import { RepoFilter } from "../runtime/repo-filter.js";
 import type { GitHubScanPaths } from "../runtime/paths.js";
@@ -76,6 +77,13 @@ export interface PollerOptions {
   paths: GitHubScanPaths;
   /** Restrict inbox visibility to the same allow-list used by dispatch. */
   repoFilter?: RepoFilter;
+  /**
+   * GitHub login of the daemon agent. When provided, enables auto-revert
+   * of `github-scan:human` items whose human authors have commented
+   * back since the label was applied (issue #358). When absent (e.g.
+   * the operator has no resolvable identity), auto-revert is skipped.
+   */
+  agentLogin?: string;
   /** Abort signal for cooperative shutdown (wired from SIGTERM handler). */
   signal?: AbortSignal;
   /** `Date.now`-style clock override for tests. */
@@ -106,6 +114,8 @@ interface PollOnceDeps {
   host: string;
   now: () => number;
   repoFilter?: RepoFilter;
+  /** Daemon agent login. Enables issue #358 auto-revert when set. */
+  agentLogin?: string;
 }
 
 /** Seconds-precision ISO-8601 UTC, matching `date -u +%Y-%m-%dT%H:%M:%SZ`. */
@@ -138,10 +148,7 @@ export function rateLimitBackoffMs(streak: number): number {
   return 60_000 * Math.pow(2, exponent);
 }
 
-async function defaultSleep(
-  ms: number,
-  signal?: AbortSignal,
-): Promise<void> {
+async function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
   if (ms <= 0) return;
   if (signal?.aborted) return;
   return new Promise<void>((resolve) => {
@@ -187,9 +194,7 @@ export async function pollOnce(deps: PollOnceDeps): Promise<PollOutcome> {
   } catch (err) {
     if (err instanceof GhExecError) {
       const rateLimited = isRateLimited(err.stdout, err.stderr);
-      warnings.push(
-        `GitHub notifications fetch failed: ${err.message.split("\n")[0]}`,
-      );
+      warnings.push(`GitHub notifications fetch failed: ${err.message.split("\n")[0]}`);
       return {
         total: 0,
         newCount: 0,
@@ -207,6 +212,24 @@ export async function pollOnce(deps: PollOnceDeps): Promise<PollOutcome> {
   if (enrichmentWarning) {
     warnings.push(`label enrichment degraded: ${enrichmentWarning}`);
   }
+
+  // Issue #358: auto-revert `github-scan:human` items whose human author
+  // has commented back since the label was applied. Mutates `entry.labels`
+  // in place so the classifier below derives `new` for them naturally —
+  // no classifier change needed.
+  if (deps.agentLogin && deps.agentLogin.length > 0) {
+    const revert = autoRevertHumanLabels(entries, {
+      gh,
+      agentLogin: deps.agentLogin,
+    });
+    for (const w of revert.warnings) warnings.push(w);
+    if (revert.reverted.length > 0) {
+      warnings.push(
+        `auto-reverted github-scan:human on ${revert.reverted.length} item(s) (issue #358)`,
+      );
+    }
+  }
+
   classifyEntries(entries);
 
   const pollTs = formatUtcIso(now());
@@ -282,6 +305,7 @@ export async function runPoller(options: PollerOptions): Promise<void> {
         host: options.host,
         now,
         repoFilter: options.repoFilter ?? RepoFilter.empty(),
+        agentLogin: options.agentLogin,
       });
     } catch (err) {
       // Local/setup error (not a gh-side failure). Log and retry after
@@ -305,9 +329,7 @@ export async function runPoller(options: PollerOptions): Promise<void> {
     }
 
     rateLimitStreak = 0;
-    logger.info(
-      `github-scan: polled ${outcome.total} notifications (${outcome.newCount} new)`,
-    );
+    logger.info(`github-scan: polled ${outcome.total} notifications (${outcome.newCount} new)`);
     await sleep(options.pollIntervalSec * 1000, signal);
   }
 }

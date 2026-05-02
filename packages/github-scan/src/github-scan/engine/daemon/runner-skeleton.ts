@@ -238,10 +238,7 @@ export function parseDaemonArgs(argv: readonly string[]): DaemonCliOverrides {
  * Returns a cleanup function that removes the handlers — tests should
  * call it to avoid polluting the signal table across test cases.
  */
-function installShutdownHandlers(
-  controller: AbortController,
-  logger: PollerLogger,
-): () => void {
+function installShutdownHandlers(controller: AbortController, logger: PollerLogger): () => void {
   const signals: NodeJS.Signals[] = ["SIGTERM", "SIGINT"];
   const onSignal = (signal: NodeJS.Signals): void => {
     if (controller.signal.aborted) return;
@@ -304,9 +301,7 @@ export async function runDaemon(
         `gh token for ${identity.login}@${identity.host} lacks \`repo\`/\`notifications\` scope; poll may return empty results`,
       );
     } else {
-      logger.info(
-        `github-scan daemon: identity=${identity.login}@${identity.host}`,
-      );
+      logger.info(`github-scan daemon: identity=${identity.login}@${identity.host}`);
     }
   } catch (err) {
     logger.warn(
@@ -352,20 +347,17 @@ export async function runDaemon(
   }
   if (options.signal) {
     if (options.signal.aborted) controller.abort();
-    else options.signal.addEventListener("abort", () => controller.abort(), {
-      once: true,
-    });
+    else
+      options.signal.addEventListener("abort", () => controller.abort(), {
+        once: true,
+      });
   }
 
   let dispatcher: Dispatcher | null = null;
   const runtimeStore = new ThreadStore({ runnerHome });
-  const allowedReposLabel = repoFilter.isEmpty()
-    ? "all"
-    : repoFilter.displayPatterns();
+  const allowedReposLabel = repoFilter.isEmpty() ? "all" : repoFilter.displayPatterns();
   const runtimeStatus: Record<string, string> = {
-    last_identity: identity
-      ? `${identity.login}@${identity.host}`
-      : `unknown@${config.host}`,
+    last_identity: identity ? `${identity.login}@${identity.host}` : `unknown@${config.host}`,
     allowed_repos: allowedReposLabel,
     active_tasks: "0",
     queued_tasks: "0",
@@ -393,10 +385,7 @@ export async function runDaemon(
     );
   };
   publishRuntimeStatus();
-  const runtimeRefreshMs = Math.max(
-    1_000,
-    Math.min(config.pollIntervalSec * 1_000, 30_000),
-  );
+  const runtimeRefreshMs = Math.max(1_000, Math.min(config.pollIntervalSec * 1_000, 30_000));
   const runtimeTicker = setInterval(() => publishRuntimeStatus(), runtimeRefreshMs);
   runtimeTicker.unref?.();
 
@@ -407,9 +396,7 @@ export async function runDaemon(
   // Phase 3c: shared in-process bus drives SSE + broker task events.
   const bus = createBus({
     onListenerError: (err) =>
-      logger.warn(
-        `bus listener threw: ${err instanceof Error ? err.message : String(err)}`,
-      ),
+      logger.warn(`bus listener threw: ${err instanceof Error ? err.message : String(err)}`),
   });
 
   // Phase 3c: start gh broker + dispatcher if agents are available.
@@ -417,13 +404,11 @@ export async function runDaemon(
   // read-only (poller + http).
   let broker: RunningBroker | null = null;
   let candidateLoopDone: Promise<void> | null = null;
-  let candidateRuntime:
-    | {
-        client: BrokerGhClient;
-        dispatcher: Dispatcher;
-        scheduler: Scheduler;
-      }
-    | null = null;
+  let candidateRuntime: {
+    client: BrokerGhClient;
+    dispatcher: Dispatcher;
+    scheduler: Scheduler;
+  } | null = null;
   try {
     const agents = detectAvailableAgents();
     const realGh = findExecutable("gh");
@@ -511,8 +496,7 @@ export async function runDaemon(
                 Math.floor(Date.now() / 1_000) + config.pollIntervalSec,
               ),
             }),
-          recoverableCandidates: () =>
-            scheduler.enqueueRecoverableTasks(identity.host),
+          recoverableCandidates: () => scheduler.enqueueRecoverableTasks(identity.host),
         }).catch((err) => {
           logger.error(
             `candidate loop crashed: ${err instanceof Error ? err.message : String(err)}`,
@@ -523,9 +507,7 @@ export async function runDaemon(
       const missing: string[] = [];
       if (agents.length === 0) missing.push("no codex/claude on PATH");
       if (!realGh) missing.push("no gh on PATH");
-      logger.warn(
-        `github-scan daemon: skipping broker/dispatcher (${missing.join("; ")})`,
-      );
+      logger.warn(`github-scan daemon: skipping broker/dispatcher (${missing.join("; ")})`);
     }
   } catch (err) {
     logger.error(
@@ -542,14 +524,14 @@ export async function runDaemon(
   let httpServer: RunningHttpServer | null = null;
   if (!controller.signal.aborted) {
     try {
-        httpServer = await startHttpServer({
-          httpPort: config.httpPort,
-          inboxPath: paths.inbox,
-          activityLogPath: paths.activityLog,
-          tasksProvider: () => runtimeStore.listDashboardTasks(),
-          bus: toSseBus(bus),
-          signal: controller.signal,
-          logger,
+      httpServer = await startHttpServer({
+        httpPort: config.httpPort,
+        inboxPath: paths.inbox,
+        activityLogPath: paths.activityLog,
+        tasksProvider: () => runtimeStore.listDashboardTasks(),
+        bus: toSseBus(bus),
+        signal: controller.signal,
+        logger,
       });
     } catch (err) {
       logger.error(
@@ -571,7 +553,7 @@ export async function runDaemon(
       // One-shot: run a single poll cycle, then wait for the
       // dispatcher to drain. Also run one candidate-search cycle so
       // assigned/review-requested work is not lost before shutdown.
-      await runPollerOnce(config, paths, repoFilter, controller.signal, logger);
+      await runPollerOnce(config, paths, repoFilter, controller.signal, logger, identity?.login);
       if (candidateRuntime) {
         const outcome = await runCandidateCycle(
           {
@@ -595,11 +577,12 @@ export async function runDaemon(
         repoFilter,
         signal: controller.signal,
         logger,
+        agentLogin: identity?.login,
       });
     }
   } catch (err) {
     logger.error(
-      `poller exited with error: ${err instanceof Error ? err.stack ?? err.message : String(err)}`,
+      `poller exited with error: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
     );
     exitCode = 1;
   } finally {
@@ -632,9 +615,7 @@ export async function runDaemon(
       try {
         await broker.stop();
       } catch (err) {
-        logger.warn(
-          `broker shutdown failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        logger.warn(`broker shutdown failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
     if (httpServer) {
@@ -730,6 +711,7 @@ async function runPollerOnce(
   repoFilter: RepoFilter,
   signal: AbortSignal,
   logger: PollerLogger,
+  agentLogin?: string,
 ): Promise<void> {
   if (signal.aborted) return;
   try {
@@ -739,15 +721,12 @@ async function runPollerOnce(
       repoFilter,
       host: config.host,
       now: Date.now,
+      agentLogin,
     });
     for (const warning of outcome.warnings) logger.warn(warning);
-    logger.info(
-      `github-scan: polled ${outcome.total} notifications (${outcome.newCount} new)`,
-    );
+    logger.info(`github-scan: polled ${outcome.total} notifications (${outcome.newCount} new)`);
   } catch (err) {
-    logger.warn(
-      `run-once poll failed: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    logger.warn(`run-once poll failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -755,10 +734,7 @@ async function runPollerOnce(
  * Wait until the dispatcher has no active or pending tasks, or the
  * signal fires. Polls the dispatcher counters every 250ms.
  */
-async function waitForDispatcherDrain(
-  dispatcher: Dispatcher,
-  signal: AbortSignal,
-): Promise<void> {
+async function waitForDispatcherDrain(dispatcher: Dispatcher, signal: AbortSignal): Promise<void> {
   while (!signal.aborted) {
     if (dispatcher.activeCount() === 0 && dispatcher.pendingCount() === 0) {
       return;
