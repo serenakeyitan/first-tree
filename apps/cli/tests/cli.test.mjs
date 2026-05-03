@@ -391,6 +391,55 @@ describe("first-tree CLI", () => {
 
     expect(linkResult.code).toBe(0);
     expect(linkResult.stdout).toContain("Linked");
+
+    // Healthy `skill list` non-JSON output should mark every skill `installed`,
+    // not `incompatible`.
+    expect(listResult.stdout).not.toContain("incompatible");
+    // Healthy `skill list --json` rows should expose `compatible: true`.
+    for (const row of listJson) {
+      expect(row.compatible).toBe(true);
+    }
+  });
+
+  it("flags incompatible cliCompat in `skill list` and gives a CLI-version fix hint in `skill doctor`", async () => {
+    const root = await mkdtemp(resolve(tmpdir(), "first-tree-skill-incompat-"));
+
+    const installResult = await runCli(["tree", "skill", "install", "--root", root]);
+    expect(installResult.code).toBe(0);
+
+    // Force one skill's cliCompat range to require an unreachable major. The
+    // current CLI is 0.4.x; >=99.0.0 cannot match.
+    const skillPath = resolve(root, ".agents", "skills", "first-tree-onboarding", "SKILL.md");
+    const original = await readFile(skillPath, "utf8");
+    await writeFile(skillPath, original.replace(/>=0\.4\.0 <0\.5\.0/u, ">=99.0.0"));
+
+    const listResult = await runCli(["tree", "skill", "list", "--root", root]);
+    const listJsonResult = await runCli(["tree", "skill", "list", "--root", root, "--json"]);
+    const doctorResult = await runCli(["tree", "skill", "doctor", "--root", root]);
+    const doctorJsonResult = await runCli(["tree", "skill", "doctor", "--root", root, "--json"]);
+
+    expect(listResult.code).toBe(0);
+    expect(listResult.stdout).toMatch(/first-tree-onboarding\s+incompatible/u);
+
+    const listJson = JSON.parse(listJsonResult.stdout);
+    const onboardingStatus = listJson.find((row) => row.name === "first-tree-onboarding");
+    expect(onboardingStatus.compatible).toBe(false);
+    const otherStatuses = listJson.filter((row) => row.name !== "first-tree-onboarding");
+    for (const row of otherStatuses) {
+      expect(row.compatible).toBe(true);
+    }
+
+    expect(doctorResult.code).toBe(1);
+    expect(doctorResult.stdout).toContain("first-tree-onboarding requires first-tree >=99.0.0");
+    expect(doctorResult.stdout).toContain("These skills require a different CLI version");
+    // The generic link/upgrade hint should NOT appear when the only failures
+    // are cliCompat mismatches — those are not fixable by re-copying payloads.
+    expect(doctorResult.stdout).not.toContain("Repair shipped skill payloads with:");
+
+    const doctorJson = JSON.parse(doctorJsonResult.stdout);
+    const onboardingDiagnosis = doctorJson.find((row) => row.name === "first-tree-onboarding");
+    expect(onboardingDiagnosis.ok).toBe(false);
+    expect(onboardingDiagnosis.incompatibleCliCompat).toBe(">=99.0.0");
   });
 
   it("runs bare `github scan` and prints help with exit 0", async () => {

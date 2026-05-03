@@ -33,6 +33,11 @@ export type SkillEntryKind = "missing" | "symlink" | "directory";
 export type SkillStatus = {
   cliCompat: string | null;
   cliVersion: string | null;
+  // `true` when the skill's `cliCompat` range satisfies `cliVersion`,
+  // `false` when it does not, `null` when either piece is missing or the
+  // range is unparseable. `null` is also returned for skills that are not
+  // installed at all (no SKILL.md to read `cliCompat` from).
+  compatible: boolean | null;
   name: SkillName;
   installed: boolean;
   version: string | null;
@@ -44,6 +49,11 @@ export type SkillStatus = {
 
 export type SkillDiagnosis = {
   cliVersion: string | null;
+  // When non-null, the skill's `cliCompat` range was parsed and rejected the
+  // current CLI version. Carries the original range string so renderers can
+  // give an actionable upgrade-CLI/pin-skill suggestion instead of the
+  // generic "skill link / skill upgrade" hint.
+  incompatibleCliCompat: string | null;
   name: SkillName;
   ok: boolean;
   problems: string[];
@@ -359,6 +369,8 @@ export function collectSkillStatus(targetRoot: string): readonly SkillStatus[] {
     return {
       cliCompat: metadata.cliCompat,
       cliVersion,
+      compatible:
+        agents.kind === "missing" ? null : isCliCompatible(cliVersion, metadata.cliCompat),
       name: layout.name,
       installed,
       version: agents.kind === "missing" ? null : readVersion(agentsFull),
@@ -375,6 +387,7 @@ export function collectSkillDiagnosis(targetRoot: string): readonly SkillDiagnos
 
   return allSkillLayouts().map((layout) => {
     const problems: string[] = [];
+    let incompatibleCliCompat: string | null = null;
     const agentsFull = join(targetRoot, layout.agentsPath);
     const claudeFull = join(targetRoot, layout.claudePath);
     const agents = inspectSkillEntry(agentsFull);
@@ -407,6 +420,7 @@ export function collectSkillDiagnosis(targetRoot: string): readonly SkillDiagnos
       } else {
         const compatible = isCliCompatible(cliVersion, metadata.cliCompat);
         if (compatible === false) {
+          incompatibleCliCompat = metadata.cliCompat;
           problems.push(
             `${layout.name} requires first-tree ${metadata.cliCompat}, but the current CLI version is ${cliVersion ?? "unknown"}`,
           );
@@ -428,6 +442,7 @@ export function collectSkillDiagnosis(targetRoot: string): readonly SkillDiagnos
 
     return {
       cliVersion,
+      incompatibleCliCompat,
       name: layout.name,
       ok: problems.length === 0,
       problems,

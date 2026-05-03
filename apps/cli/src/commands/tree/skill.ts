@@ -34,6 +34,12 @@ function runUpgradeSkillCommand(context: CommandContext): void {
   console.log(`Upgraded ${SKILL_NAMES.length} shipped first-tree skills in ${targetRoot}.`);
 }
 
+function listStatusLabel(row: { installed: boolean; compatible: boolean | null }): string {
+  if (!row.installed) return "missing";
+  if (row.compatible === false) return "incompatible";
+  return "installed";
+}
+
 function runListSkillCommand(context: CommandContext): void {
   const targetRoot = readTargetRoot(context.command);
   const rows = collectSkillStatus(targetRoot);
@@ -45,15 +51,16 @@ function runListSkillCommand(context: CommandContext): void {
 
   const nameWidth = Math.max(...rows.map((row) => row.name.length));
   const compatWidth = Math.max(...rows.map((row) => (row.cliCompat ?? "-").length), 10);
+  const statusWidth = "incompatible".length;
   console.log(
-    `${"NAME".padEnd(nameWidth)}  STATUS     VERSION        CLI COMPAT`.padEnd(
-      nameWidth + compatWidth + 23,
+    `${"NAME".padEnd(nameWidth)}  ${"STATUS".padEnd(statusWidth)}  VERSION        CLI COMPAT`.padEnd(
+      nameWidth + statusWidth + compatWidth + 21,
     ),
   );
-  console.log("-".repeat(nameWidth + compatWidth + 23));
+  console.log("-".repeat(nameWidth + statusWidth + compatWidth + 21));
   for (const row of rows) {
     console.log(
-      `${row.name.padEnd(nameWidth)}  ${(row.installed ? "installed" : "missing").padEnd(9)}  ${(row.version ?? "-").padEnd(13)} ${(row.cliCompat ?? "-").padEnd(compatWidth)}`,
+      `${row.name.padEnd(nameWidth)}  ${listStatusLabel(row).padEnd(statusWidth)}  ${(row.version ?? "-").padEnd(13)} ${(row.cliCompat ?? "-").padEnd(compatWidth)}`,
     );
   }
 }
@@ -83,11 +90,29 @@ function runDoctorSkillCommand(context: CommandContext): void {
   const failingRows = rows.filter((row) => !row.ok);
   if (failingRows.length > 0) {
     if (!context.options.json) {
+      const incompatible = failingRows.filter((row) => row.incompatibleCliCompat !== null);
+      const otherFailures = failingRows.filter((row) => row.incompatibleCliCompat === null);
+      const cliVersion = rows[0]?.cliVersion ?? "unknown";
+
       console.log("");
       console.log(`Found problems in ${failingRows.length} of ${rows.length} skills.`);
-      console.log("Fix with:");
-      console.log("  first-tree tree skill link");
-      console.log("  first-tree tree skill upgrade");
+
+      if (incompatible.length > 0) {
+        console.log("");
+        console.log(`The current CLI version is ${cliVersion}.`);
+        console.log("These skills require a different CLI version — pin the CLI to a satisfying");
+        console.log("range, or downgrade the skill payload to one that lists this CLI:");
+        for (const row of incompatible) {
+          console.log(`  ${row.name} requires first-tree ${row.incompatibleCliCompat}`);
+        }
+      }
+
+      if (otherFailures.length > 0) {
+        console.log("");
+        console.log("Repair shipped skill payloads with:");
+        console.log("  first-tree tree skill link");
+        console.log("  first-tree tree skill upgrade");
+      }
     }
     process.exitCode = 1;
   }
