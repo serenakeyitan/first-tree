@@ -10,8 +10,10 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { homedir, platform } from "node:os";
+import { join, resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { createInterface } from "node:readline";
 
 import {
   parseAllowRepoArg,
@@ -37,6 +39,38 @@ export interface InstallDeps {
     cmd: string;
     args: string[];
   };
+  /**
+   * Resolves the repo root so we can find apps/tray-mac/scripts/install-tray.sh.
+   * Production callers leave this default; tests inject a fixture path.
+   */
+  repoRoot?: string;
+  /**
+   * Override "is this an interactive TTY?". Tests pass false to suppress prompts.
+   */
+  isInteractive?: () => boolean;
+  /**
+   * Read a single line of user input. Defaults to readline on stdin.
+   */
+  prompt?: (question: string) => Promise<string>;
+}
+
+/** macOS-only menu bar tray onboarding choices, parsed from CLI flags. */
+interface TrayChoice {
+  /** "yes" — install tray. "no" — skip. "ask" — prompt the user (default). */
+  install: "yes" | "no" | "ask";
+  /** Whether to remove macOS quarantine on the installed app. */
+  keepQuarantine: boolean;
+}
+
+function parseTrayFlags(args: readonly string[]): TrayChoice {
+  let install: TrayChoice["install"] = "ask";
+  let keepQuarantine = false;
+  for (const arg of args) {
+    if (arg === "--tray" || arg === "--tray=yes") install = "yes";
+    else if (arg === "--no-tray" || arg === "--tray=no") install = "no";
+    else if (arg === "--keep-quarantine") keepQuarantine = true;
+  }
+  return { install, keepQuarantine };
 }
 
 export function resolveSelfStartCommand(
@@ -64,10 +98,10 @@ function defaultCheckGhAuth(): boolean {
   return result.status === 0;
 }
 
-export function runInstall(
+export async function runInstall(
   args: readonly string[],
   deps: InstallDeps = {},
-): number {
+): Promise<number> {
   if (args.length > 0 && (args[0] === "--help" || args[0] === "-h")) {
     (deps.write ?? console.log)(`usage: first-tree github scan install
 
@@ -76,9 +110,17 @@ export function runInstall(
     1. Checks for gh and gh auth status
     2. Creates \`~/.first-tree/github-scan/config.yaml\` with defaults (if absent)
     3. Starts the daemon via \`first-tree github scan start\`
+    4. (macOS only) Optionally installs the menu bar app
 
   Required:
     ${REQUIRED_ALLOW_REPO_USAGE}   Explicit repo scope for the daemon startup
+
+  Menu bar app (macOS only):
+    --tray                     Install the menu bar app without prompting
+    --no-tray                  Skip the menu bar app without prompting
+    --keep-quarantine          Don't remove macOS quarantine on the installed
+                               app (you'll see a one-time confirmation dialog
+                               on first launch). Default: silent first launch.
 
   Environment:
     GITHUB_SCAN_DIR            Override \`~/.first-tree/github-scan\` (store root)
@@ -130,7 +172,11 @@ export function runInstall(
   write("");
 
   write("Starting the github-scan daemon...");
-  const result = spawn(startCommand.cmd, [...startCommand.args, ...args], {
+  // Strip tray-only flags before forwarding to `start` (which doesn't know them).
+  const startArgs = args.filter(
+    (a) => a !== "--tray" && a !== "--no-tray" && a !== "--tray=yes" && a !== "--tray=no" && a !== "--keep-quarantine",
+  );
+  const result = spawn(startCommand.cmd, [...startCommand.args, ...startArgs], {
     stdio: "inherit",
   });
   if (result.status === 0) {
@@ -142,6 +188,11 @@ export function runInstall(
   }
   write("");
 
+  // macOS-only: offer to install the menu bar tray app, which mirrors the dashboard.
+  if (platform() === "darwin") {
+    await installTrayInteractive(args, deps, write, spawn);
+  }
+
   write("=== github-scan setup complete ===");
   write("");
   write("  Dashboard:  http://127.0.0.1:7878");
@@ -150,4 +201,117 @@ export function runInstall(
   write("  Inspect:    first-tree github scan doctor");
 
   return 0;
+}
+
+/**
+ * Walks the user through installing the menu bar tray. Honors --tray / --no-tray
+ * / --keep-quarantine flags. In a TTY, prompts when no flag was given. In a
+ * non-TTY (CI, scripts), defaults to skipping (we don't silently install GUI
+ * apps for unattended runs).
+ */
+async function installTrayInteractive(
+  args: readonly string[],
+  deps: InstallDeps,
+  write: (text: string) => void,
+  spawn: typeof spawnSync,
+): Promise<void> {
+  const choice = parseTrayFlags(args);
+  const repoRoot = deps.repoRoot ?? findRepoRoot();
+  const installScript = repoRoot
+    ? join(repoRoot, "apps/tray-mac/scripts/install-tray.sh")
+    : null;
+
+  // If we can't find the install script, the tray isn't shipped with this
+  // build — skip silently. (E.g., the daemon was installed standalone without
+  // the apps/tray-mac/ directory alongside it.)
+  if (!installScript || !existsSync(installScript)) {
+    return;
+  }
+
+  const isInteractive = deps.isInteractive ?? (() => Boolean(process.stdin.isTTY));
+
+  // Resolve the user's choice: explicit flag wins; otherwise prompt if interactive.
+  let installDecision: boolean;
+  let keepQuarantine = choice.keepQuarantine;
+  if (choice.install === "yes") {
+    installDecision = true;
+  } else if (choice.install === "no") {
+    installDecision = false;
+  } else if (isInteractive()) {
+    write("Menu bar app (macOS):");
+    write(
+      "  Adds a small icon to your menu bar so you can see and act on GitHub items",
+    );
+    write("  without opening a browser. Same data as the dashboard.");
+    write("");
+    const ans = (await (deps.prompt ?? defaultPrompt)("Install it? [Y/n] ")).trim().toLowerCase();
+    installDecision = ans !== "n" && ans !== "no";
+
+    if (installDecision && !choice.keepQuarantine) {
+      // Soft-explain quarantine in plain language. Default is "yes, open instantly".
+      write("");
+      write(
+        "First time you open it, macOS may ask you to confirm. Want to skip that and",
+      );
+      write("open it instantly? Recommended unless you specifically want the warning.");
+      const q = (await (deps.prompt ?? defaultPrompt)("Open instantly? [Y/n] ")).trim().toLowerCase();
+      keepQuarantine = q === "n" || q === "no";
+    }
+  } else {
+    // Non-interactive and no flag given — skip; user can re-run with --tray.
+    return;
+  }
+
+  if (!installDecision) {
+    write("  Skipped menu bar app. Run `first-tree github scan install --tray` later to add it.");
+    write("");
+    return;
+  }
+
+  write("");
+  write("Installing menu bar app...");
+  const scriptArgs: string[] = [];
+  if (keepQuarantine) scriptArgs.push("--keep-quarantine");
+  const r = spawn(installScript, scriptArgs, { stdio: "inherit" });
+  if (r.status === 0) {
+    write("  Menu bar icon should now be visible in the top-right of your screen.");
+  } else {
+    write(
+      "  WARN: tray install failed. You can retry with `first-tree github scan install --tray`",
+    );
+  }
+  write("");
+}
+
+/**
+ * Walk up from this module looking for the apps/tray-mac/ directory marker.
+ * Returns the repo root or null. Lets `install` find the install-tray.sh
+ * script regardless of where in the build tree this code is loaded from.
+ */
+function findRepoRoot(): string | null {
+  let current: string;
+  try {
+    current = dirname(fileURLToPath(import.meta.url));
+  } catch {
+    return null;
+  }
+  for (let i = 0; i < 10; i++) {
+    if (existsSync(join(current, "apps/tray-mac/scripts/install-tray.sh"))) {
+      return current;
+    }
+    const parent = resolve(current, "..");
+    if (parent === current) break;
+    current = parent;
+  }
+  return null;
+}
+
+function defaultPrompt(question: string): Promise<string> {
+  return new Promise((resolveAns) => {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(question, (answer) => {
+      rl.close();
+      resolveAns(answer);
+    });
+  });
 }
