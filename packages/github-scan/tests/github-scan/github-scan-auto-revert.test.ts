@@ -25,8 +25,10 @@ import {
   autoRevertHumanLabels,
   fetchHumanLabelAppliedAt,
   fetchIssueComments,
+  fetchPrCommits,
   shouldAutoRevertHuman,
   type IssueComment,
+  type PrCommit,
 } from "../../src/github-scan/engine/runtime/auto-revert.js";
 import type { GhClient, GhExecResult } from "../../src/github-scan/engine/runtime/gh.js";
 import type { InboxEntry } from "../../src/github-scan/engine/runtime/types.js";
@@ -619,5 +621,300 @@ describe("fetchIssueComments — pagination (issue #365)", () => {
     } finally {
       warnSpy.mockRestore();
     }
+  });
+});
+
+/**
+ * Issue #383 tests — author push on a PR also fires auto-revert.
+ *
+ * Required cases:
+ *   - Push from non-agent user, after label, → triggers
+ *   - Push from agent itself → does NOT trigger
+ *   - Push with `committer.date` before label → does NOT trigger
+ *   - PR with both qualifying comment and qualifying commit — latest wins
+ *   - Issue entries (non-PR) — commits not fetched, existing behaviour preserved
+ *   - Force-push: `author.date` before label but `committer.date` after → DOES trigger
+ *     (we model this by passing only `committedAt`; the function never sees
+ *     `author.date`, so a post-label `committer.date` is sufficient — which
+ *     is the whole point.)
+ */
+describe("shouldAutoRevertHuman — commit guards (issue #383)", () => {
+  it("non-agent push after label triggers revert", () => {
+    const commits: PrCommit[] = [{ author: "alice", committedAt: "2026-04-30T11:00:00Z" }];
+    expect(
+      shouldAutoRevertHuman({
+        agentLogin: AGENT,
+        labelAppliedAt: LABEL_TS,
+        comments: [],
+        commits,
+      }),
+    ).toBe(true);
+  });
+
+  it("agent's own push does NOT trigger revert", () => {
+    const commits: PrCommit[] = [{ author: AGENT, committedAt: "2026-04-30T11:00:00Z" }];
+    expect(
+      shouldAutoRevertHuman({
+        agentLogin: AGENT,
+        labelAppliedAt: LABEL_TS,
+        comments: [],
+        commits,
+      }),
+    ).toBe(false);
+  });
+
+  it("push with committer.date strictly before label does NOT trigger revert", () => {
+    const commits: PrCommit[] = [{ author: "alice", committedAt: "2026-04-30T09:59:59Z" }];
+    expect(
+      shouldAutoRevertHuman({
+        agentLogin: AGENT,
+        labelAppliedAt: LABEL_TS,
+        comments: [],
+        commits,
+      }),
+    ).toBe(false);
+  });
+
+  it("push with committer.date exactly at label is NOT considered after (strict inequality)", () => {
+    const commits: PrCommit[] = [{ author: "alice", committedAt: LABEL_TS }];
+    expect(
+      shouldAutoRevertHuman({
+        agentLogin: AGENT,
+        labelAppliedAt: LABEL_TS,
+        comments: [],
+        commits,
+      }),
+    ).toBe(false);
+  });
+
+  it("force-push: only post-label committer.date is needed; author.date is irrelevant by design", () => {
+    // The PrCommit shape carries committer.date only — author.date is
+    // never plumbed in. So a force-pushed old commit (author.date back
+    // in 2024) whose committer.date is post-label triggers revert. This
+    // is the exact scenario the issue called out.
+    const commits: PrCommit[] = [{ author: "alice", committedAt: "2026-04-30T11:00:00Z" }];
+    expect(
+      shouldAutoRevertHuman({
+        agentLogin: AGENT,
+        labelAppliedAt: LABEL_TS,
+        comments: [],
+        commits,
+      }),
+    ).toBe(true);
+  });
+
+  it("PR with both qualifying comment and qualifying commit — fires (either path)", () => {
+    const comments: IssueComment[] = [
+      {
+        author: "alice",
+        body: "Go ahead with option A — please proceed and ping me if you hit anything weird.",
+        createdAt: "2026-04-30T11:00:00Z",
+      },
+    ];
+    const commits: PrCommit[] = [{ author: "alice", committedAt: "2026-04-30T12:00:00Z" }];
+    expect(
+      shouldAutoRevertHuman({
+        agentLogin: AGENT,
+        labelAppliedAt: LABEL_TS,
+        comments,
+        commits,
+      }),
+    ).toBe(true);
+  });
+
+  it("commit author null (un-attributed) is NOT treated as the agent and triggers revert if post-label", () => {
+    const commits: PrCommit[] = [{ author: null, committedAt: "2026-04-30T11:00:00Z" }];
+    expect(
+      shouldAutoRevertHuman({
+        agentLogin: AGENT,
+        labelAppliedAt: LABEL_TS,
+        comments: [],
+        commits,
+      }),
+    ).toBe(true);
+  });
+
+  it("agent-login comparison on commits is case-insensitive", () => {
+    const commits: PrCommit[] = [{ author: "First-Tree-Bot", committedAt: "2026-04-30T11:00:00Z" }];
+    expect(
+      shouldAutoRevertHuman({
+        agentLogin: "first-tree-bot",
+        labelAppliedAt: LABEL_TS,
+        comments: [],
+        commits,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("autoRevertHumanLabels — commit-driven revert (issue #383)", () => {
+  it("PR entry with no qualifying comment but a qualifying author push → reverts", () => {
+    const removeLabel = vi.fn().mockReturnValue(true);
+    const stubGh = { removeLabel } as unknown as GhClient;
+    const entry = makeEntry({ type: "PullRequest" });
+
+    const out = autoRevertHumanLabels([entry], {
+      gh: stubGh,
+      agentLogin: AGENT,
+      fetchLabelAppliedAt: () => LABEL_TS,
+      fetchComments: () => [],
+      fetchCommits: () => [{ author: "alice", committedAt: "2026-04-30T11:00:00Z" }],
+    });
+
+    expect(removeLabel).toHaveBeenCalledTimes(1);
+    expect(entry.labels).not.toContain("github-scan:human");
+    expect(out.reverted).toEqual(["n-1"]);
+  });
+
+  it("Issue entry (non-PR): commits are NOT fetched; existing comment-only behaviour preserved", () => {
+    const removeLabel = vi.fn();
+    const stubGh = { removeLabel } as unknown as GhClient;
+    const entry = makeEntry({ type: "Issue" });
+
+    const fetchCommits = vi.fn(() => {
+      throw new Error("commits should not be fetched for Issue entries");
+    });
+
+    const out = autoRevertHumanLabels([entry], {
+      gh: stubGh,
+      agentLogin: AGENT,
+      fetchLabelAppliedAt: () => LABEL_TS,
+      fetchComments: () => [],
+      fetchCommits,
+    });
+
+    expect(fetchCommits).not.toHaveBeenCalled();
+    expect(removeLabel).not.toHaveBeenCalled();
+    expect(entry.labels).toContain("github-scan:human");
+    expect(out.reverted).toEqual([]);
+  });
+
+  it("PR entry: agent-pushed commit alone does NOT trigger revert", () => {
+    const removeLabel = vi.fn();
+    const stubGh = { removeLabel } as unknown as GhClient;
+    const entry = makeEntry({ type: "PullRequest" });
+
+    const out = autoRevertHumanLabels([entry], {
+      gh: stubGh,
+      agentLogin: AGENT,
+      fetchLabelAppliedAt: () => LABEL_TS,
+      fetchComments: () => [],
+      fetchCommits: () => [{ author: AGENT, committedAt: "2026-04-30T11:00:00Z" }],
+    });
+
+    expect(removeLabel).not.toHaveBeenCalled();
+    expect(entry.labels).toContain("github-scan:human");
+    expect(out.reverted).toEqual([]);
+  });
+
+  it("PR entry: failed commits fetch warns and skips (does not strip the label)", () => {
+    const removeLabel = vi.fn();
+    const stubGh = { removeLabel } as unknown as GhClient;
+    const entry = makeEntry({ type: "PullRequest" });
+
+    const out = autoRevertHumanLabels([entry], {
+      gh: stubGh,
+      agentLogin: AGENT,
+      fetchLabelAppliedAt: () => LABEL_TS,
+      fetchComments: () => [],
+      fetchCommits: () => null,
+    });
+
+    expect(removeLabel).not.toHaveBeenCalled();
+    expect(entry.labels).toContain("github-scan:human");
+    expect(out.reverted).toEqual([]);
+    expect(out.warnings.length).toBe(1);
+    expect(out.warnings[0]).toMatch(/PR commits fetch failed/);
+  });
+});
+
+describe("fetchPrCommits — pagination (issue #383)", () => {
+  function commitRaw(login: string | null, committedAt: string): unknown {
+    return {
+      author: login === null ? null : { login },
+      commit: {
+        committer: { date: committedAt },
+        author: { date: committedAt },
+      },
+    };
+  }
+
+  function makeRunStub(pages: readonly unknown[][]) {
+    const state = { calls: 0, requestedPages: [] as number[] };
+    const run = (args: readonly string[]): GhExecResult => {
+      state.calls++;
+      const url = args[1] ?? "";
+      const match = /[?&]page=(\d+)/.exec(url);
+      const page = match ? Number.parseInt(match[1]!, 10) : 1;
+      state.requestedPages.push(page);
+      const body = pages[page - 1] ?? [];
+      return { status: 0, stdout: JSON.stringify(body), stderr: "" };
+    };
+    return { run, state };
+  }
+
+  it("0-page (empty commits): returns []", () => {
+    const stub = makeRunStub([[]]);
+    const gh = { run: stub.run } as unknown as GhClient;
+    expect(fetchPrCommits(gh, "o/r", 1)).toEqual([]);
+    expect(stub.state.calls).toBe(1);
+  });
+
+  it("1-page: short page maps shape correctly (login + committer.date)", () => {
+    const stub = makeRunStub([[commitRaw("alice", "2026-04-30T11:00:00Z")]]);
+    const gh = { run: stub.run } as unknown as GhClient;
+    const out = fetchPrCommits(gh, "o/r", 1);
+    expect(out).toEqual([{ author: "alice", committedAt: "2026-04-30T11:00:00Z" }]);
+    expect(stub.state.calls).toBe(1);
+  });
+
+  it("commits with author = null are mapped to author: null (un-attributed)", () => {
+    const stub = makeRunStub([[commitRaw(null, "2026-04-30T11:00:00Z")]]);
+    const gh = { run: stub.run } as unknown as GhClient;
+    const out = fetchPrCommits(gh, "o/r", 1);
+    expect(out).toEqual([{ author: null, committedAt: "2026-04-30T11:00:00Z" }]);
+  });
+
+  it("2-page accumulation: walks pages until natural short-page end", () => {
+    const fullPage1 = Array.from({ length: AUTO_REVERT_PAGE_SIZE }, (_, i) =>
+      commitRaw("alice", `2026-04-30T11:${String(i % 60).padStart(2, "0")}:00Z`),
+    );
+    const shortPage2 = [commitRaw("bob", "2026-04-30T12:00:00Z")];
+    const stub = makeRunStub([fullPage1, shortPage2]);
+    const gh = { run: stub.run } as unknown as GhClient;
+    const out = fetchPrCommits(gh, "o/r", 1);
+    expect(out).not.toBeNull();
+    expect(out!.length).toBe(AUTO_REVERT_PAGE_SIZE + 1);
+    expect(stub.state.calls).toBe(2);
+  });
+
+  it("hard-cap engages on > MAX_PAGES full pages and emits a console.warn", () => {
+    const fullPage = Array.from({ length: AUTO_REVERT_PAGE_SIZE }, () =>
+      commitRaw("alice", "2026-04-30T11:00:00Z"),
+    );
+    let calls = 0;
+    const gh = {
+      run: () => {
+        calls++;
+        return { status: 0, stdout: JSON.stringify(fullPage), stderr: "" };
+      },
+    } as unknown as GhClient;
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      fetchPrCommits(gh, "o/r", 1);
+      expect(calls).toBe(AUTO_REVERT_MAX_PAGES);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy.mock.calls[0]![0]).toMatch(/cap/);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("non-zero exit from gh: returns null (degrades safely; the driver will skip the revert)", () => {
+    const gh = {
+      run: () => ({ status: 1, stdout: "", stderr: "boom" }),
+    } as unknown as GhClient;
+    expect(fetchPrCommits(gh, "o/r", 1)).toBeNull();
   });
 });

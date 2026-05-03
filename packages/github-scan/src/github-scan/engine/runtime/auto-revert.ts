@@ -1,14 +1,14 @@
 /**
  * Auto-revert `github-scan:human` → `new` when the human comments back
- * (issue #358).
+ * (issue #358) or pushes a fix commit (issue #383).
  *
  * Spec: when the daemon polls an item classified `human` and a qualifying
- * human comment is observed *after* the label was applied, the daemon
+ * human signal is observed *after* the label was applied, the daemon
  * strips `github-scan:human` from the item. The classifier (which is
  * pure and unchanged) then derives `new` on the next cycle and the
  * dispatcher picks the item up.
  *
- * Guards (issue #358 acceptance criteria, updated by issue #382):
+ * Comment guards (issue #358 acceptance criteria, updated by issue #382):
  *   1. Comment author MUST NOT be the agent itself (the daemon's identity).
  *   2. Reactions alone do NOT count as a comment (callers pass real comments only;
  *      defensively, empty-body comments are also rejected).
@@ -19,6 +19,14 @@
  * because it produced false negatives for legitimate short approvals
  * (`LGTM`, `go ahead`, `请继续推进`). Reactions are not comments in the
  * GitHub REST API, so the "filter emoji acks" rationale was already moot.
+ *
+ * Commit guards (issue #383, applies to PullRequest entries only):
+ *   1. Commit author MUST NOT be the agent itself.
+ *   2. The commit's `committer.date` MUST be strictly after the label
+ *      timestamp. We use `committer.date` (when the commit landed on the
+ *      branch on GitHub) rather than `author.date` so force-push, rebase,
+ *      and amend are handled correctly — a force-push of an old commit
+ *      onto the branch after the label was applied still triggers revert.
  *
  * This module exposes:
  *   - `shouldAutoRevertHuman` — the pure decision function (testable in isolation).
@@ -53,13 +61,34 @@ export interface IssueComment {
   createdAt: string;
 }
 
+/**
+ * A single commit on a PR, as returned by `GET /repos/{r}/pulls/{n}/commits`.
+ *
+ * Note (issue #383): `committedAt` corresponds to `commit.committer.date`
+ * — the moment the commit landed on the branch on GitHub — NOT
+ * `commit.author.date`. The two diverge on force-push, rebase, and
+ * `git commit --amend`; using `committer.date` correctly captures
+ * "this commit appeared on the PR branch after the label was applied".
+ */
+export interface PrCommit {
+  /** Commit author's GitHub login (case-insensitive when compared). May be `null` for un-attributed commits (e.g. legacy email-only). */
+  author: string | null;
+  /** ISO-8601 `commit.committer.date` — when the commit landed on the branch. */
+  committedAt: string;
+}
+
 export interface AutoRevertInput {
-  /** GitHub login of the daemon agent — comments authored by this login are ignored. */
+  /** GitHub login of the daemon agent — comments and commits authored by this login are ignored. */
   agentLogin: string;
   /** Timestamp the `github-scan:human` label was applied (ISO-8601). */
   labelAppliedAt: string;
   /** Comments on the item, in any order. */
   comments: readonly IssueComment[];
+  /**
+   * Commits on the PR, in any order. Empty / omitted for non-PR entries
+   * (issues do not have commits). Issue #383.
+   */
+  commits?: readonly PrCommit[];
 }
 
 /**
@@ -86,6 +115,23 @@ export function shouldAutoRevertHuman(input: AutoRevertInput): boolean {
     const commentTs = Date.parse(comment.createdAt);
     if (Number.isNaN(commentTs)) continue;
     if (commentTs <= labelTs) continue;
+
+    return true;
+  }
+
+  // Issue #383: a qualifying author push on a PR also fires the revert.
+  // Same author / timestamp guards as comments, but timestamps come from
+  // `commit.committer.date` (force-push correctness — see module doc).
+  for (const commit of input.commits ?? []) {
+    // Guard 1: own-commit ignored. Some commits have no attributed
+    // author login (e.g. email-only); those cannot match the agent and
+    // are treated as non-agent.
+    if (commit.author !== null && commit.author.toLowerCase() === agentLogin) continue;
+
+    // Guard 2: must be strictly after the label timestamp.
+    const ts = Date.parse(commit.committedAt);
+    if (Number.isNaN(ts)) continue;
+    if (ts <= labelTs) continue;
 
     return true;
   }
@@ -180,6 +226,77 @@ export function fetchIssueComments(
     if (page === AUTO_REVERT_MAX_PAGES) {
       console.warn(
         `auto-revert: comments fetch hit ${AUTO_REVERT_MAX_PAGES}-page cap for ${repo}#${number}; older comments may be ignored`,
+      );
+    }
+  }
+  return all;
+}
+
+function parseCommitsPage(stdout: string): PrCommit[] | null {
+  try {
+    const parsed = JSON.parse(stdout) as unknown;
+    if (!Array.isArray(parsed)) return null;
+    return parsed
+      .map((raw): PrCommit | null => {
+        if (typeof raw !== "object" || raw === null) return null;
+        // The PR commits endpoint shape:
+        //   { author: { login } | null,
+        //     commit: { committer: { date }, author: { date } } }
+        const r = raw as {
+          author?: { login?: unknown } | null;
+          commit?: {
+            committer?: { date?: unknown } | null;
+          } | null;
+        };
+        const login = r.author?.login;
+        const committedAt = r.commit?.committer?.date;
+        if (typeof committedAt !== "string") return null;
+        return {
+          author: typeof login === "string" ? login : null,
+          committedAt,
+        };
+      })
+      .filter((c): c is PrCommit => c !== null);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch commits on a PR via `GET /repos/{owner}/{repo}/pulls/{n}/commits`
+ * (issue #383).
+ *
+ * Pagination: walks pages forward (the endpoint does not support
+ * `direction=desc`, returns commits oldest-first). No early-exit: even
+ * a force-push of an old commit can land on the branch *after* the
+ * label was applied, and we use `committer.date` to detect that. Hard
+ * cap of {@link AUTO_REVERT_MAX_PAGES} pages with a `console.warn` if
+ * the cap engages.
+ *
+ * Returns `null` on error so the caller degrades gracefully — a failed
+ * commit fetch must NEVER strip the label.
+ */
+export function fetchPrCommits(gh: GhClient, repo: string, number: number): PrCommit[] | null {
+  const all: PrCommit[] = [];
+  for (let page = 1; page <= AUTO_REVERT_MAX_PAGES; page++) {
+    const result = gh.run([
+      "api",
+      `/repos/${repo}/pulls/${number}/commits?per_page=${AUTO_REVERT_PAGE_SIZE}&page=${page}`,
+      "-H",
+      "X-GitHub-Api-Version: 2022-11-28",
+    ]);
+    if (result.status !== 0) return null;
+    const pageCommits = parseCommitsPage(result.stdout);
+    if (pageCommits === null) return null;
+
+    if (pageCommits.length === 0) return all;
+    all.push(...pageCommits);
+
+    if (pageCommits.length < AUTO_REVERT_PAGE_SIZE) return all;
+
+    if (page === AUTO_REVERT_MAX_PAGES) {
+      console.warn(
+        `auto-revert: PR commits fetch hit ${AUTO_REVERT_MAX_PAGES}-page cap for ${repo}#${number}; older commits may be ignored`,
       );
     }
   }
@@ -289,6 +406,8 @@ export interface AutoRevertDeps {
   ) => IssueComment[] | null;
   /** Test seam: override timeline-fetch. */
   fetchLabelAppliedAt?: (gh: GhClient, repo: string, number: number) => string | null;
+  /** Test seam: override PR-commits fetch (default uses `fetchPrCommits`). Issue #383. */
+  fetchCommits?: (gh: GhClient, repo: string, number: number) => PrCommit[] | null;
 }
 
 export interface AutoRevertOutcome {
@@ -321,6 +440,7 @@ export function autoRevertHumanLabels(
 ): AutoRevertOutcome {
   const fetchComments = deps.fetchComments ?? fetchIssueComments;
   const fetchLabelAppliedAt = deps.fetchLabelAppliedAt ?? fetchHumanLabelAppliedAt;
+  const fetchCommits = deps.fetchCommits ?? fetchPrCommits;
 
   const reverted: string[] = [];
   const warnings: string[] = [];
@@ -343,10 +463,24 @@ export function autoRevertHumanLabels(
       continue;
     }
 
+    // Issue #383: PR entries also qualify on author push. Issues do not
+    // have commits, so we skip the fetch entirely for non-PRs to avoid
+    // a wasted (404) round-trip.
+    let commits: readonly PrCommit[] = [];
+    if (entry.type === "PullRequest") {
+      const fetched = fetchCommits(deps.gh, entry.repo, entry.number);
+      if (!fetched) {
+        warnings.push(`auto-revert: PR commits fetch failed for ${entry.repo}#${entry.number}`);
+        continue;
+      }
+      commits = fetched;
+    }
+
     const decide = shouldAutoRevertHuman({
       agentLogin: deps.agentLogin,
       labelAppliedAt,
       comments,
+      commits,
     });
     if (!decide) continue;
 
