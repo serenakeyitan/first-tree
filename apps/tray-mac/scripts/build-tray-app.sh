@@ -68,6 +68,11 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 PLIST
 
 echo "✓ Built $APP"
-echo ""
-echo "To run:  open $APP"
-echo "To install for the user: cp -R $APP ~/.first-tree/tray/"
+
+# Developer hints: only show when run interactively (not when invoked from
+# install-tray.sh during `scan install`).
+if [ -t 1 ] && [ "${FIRST_TREE_TRAY_BUILD_QUIET:-0}" = "0" ]; then
+  echo ""
+  echo "To run:  open $APP"
+  echo "To install for the user: cp -R $APP ~/.first-tree/tray/"
+fi

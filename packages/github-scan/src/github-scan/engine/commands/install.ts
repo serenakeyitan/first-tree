@@ -68,7 +68,8 @@ function parseTrayFlags(args: readonly string[]): TrayChoice {
   for (const arg of args) {
     if (arg === "--tray" || arg === "--tray=yes") install = "yes";
     else if (arg === "--no-tray" || arg === "--tray=no") install = "no";
-    else if (arg === "--keep-quarantine") keepQuarantine = true;
+    else if (arg === "--keep-quarantine" || arg === "--keep-quarantine=yes") keepQuarantine = true;
+    else if (arg === "--keep-quarantine=no") keepQuarantine = false;
   }
   return { install, keepQuarantine };
 }
@@ -165,6 +166,8 @@ export async function runInstall(
   const configPath = join(githubScanDir, "config.yaml");
   if (existsSync(configPath)) {
     write(`  Config already exists at ${configPath}`);
+    // Surface the relevant fields so users know what they're inheriting.
+    summarizeExistingConfig(configPath, write);
   } else {
     writeFileSync(configPath, DEFAULT_CONFIG);
     write(`  Created default config at ${configPath}`);
@@ -304,6 +307,32 @@ function findRepoRoot(): string | null {
     current = parent;
   }
   return null;
+}
+
+/**
+ * Print the user-visible fields of an existing config.yaml so they know what
+ * they're inheriting on a re-install. Skips fields that match defaults.
+ */
+function summarizeExistingConfig(configPath: string, write: (text: string) => void): void {
+  let raw: string;
+  try {
+    raw = require("node:fs").readFileSync(configPath, "utf8");
+  } catch {
+    return;
+  }
+  const lines = raw.split("\n");
+  const fields: Record<string, string> = {};
+  for (const line of lines) {
+    const m = /^([a-z_][a-z0-9_]*):\s*(.+?)\s*(#.*)?$/i.exec(line.trim());
+    if (m) fields[m[1]] = m[2];
+  }
+  const summary: string[] = [];
+  if (fields.http_port) summary.push(`http_port: ${fields.http_port}`);
+  if (fields.poll_interval_sec) summary.push(`poll_interval_sec: ${fields.poll_interval_sec}`);
+  if (fields.host) summary.push(`host: ${fields.host}`);
+  if (summary.length > 0) {
+    write(`    (${summary.join(", ")})`);
+  }
 }
 
 function defaultPrompt(question: string): Promise<string> {

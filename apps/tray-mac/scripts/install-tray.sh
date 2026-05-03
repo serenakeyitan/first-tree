@@ -49,7 +49,7 @@ if [ -z "$SOURCE_APP" ]; then
   SOURCE_APP="$TRAY_DIR/.build/FirstTreeTray.app"
   if [ ! -d "$SOURCE_APP" ]; then
     echo "→ Building tray app first..."
-    "$SCRIPT_DIR/build-tray-app.sh" release
+    FIRST_TREE_TRAY_BUILD_QUIET=1 "$SCRIPT_DIR/build-tray-app.sh" release
   fi
 fi
 

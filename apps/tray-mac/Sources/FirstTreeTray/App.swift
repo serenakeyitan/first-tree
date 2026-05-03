@@ -2,6 +2,31 @@ import SwiftUI
 import AppKit
 import UserNotifications
 
+/// Resolve the daemon's HTTP port from `~/.first-tree/github-scan/config.yaml`.
+/// Falls back to 7878 (the daemon default) if the file is missing, unreadable,
+/// or doesn't contain a port. Cached for the lifetime of the app — restart the
+/// tray after changing config.
+let daemonHTTPPort: Int = {
+    let configPath = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".first-tree/github-scan/config.yaml")
+    guard let raw = try? String(contentsOf: configPath, encoding: .utf8) else { return 7878 }
+    for line in raw.split(separator: "\n") {
+        // Match `http_port: 12345`. Tolerate inline comments + leading whitespace.
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        if trimmed.hasPrefix("http_port:") {
+            let value = trimmed.dropFirst("http_port:".count)
+                .split(separator: "#").first.map(String.init) ?? ""
+            if let port = Int(value.trimmingCharacters(in: .whitespaces)), port > 0, port < 65_536 {
+                return port
+            }
+        }
+    }
+    return 7878
+}()
+
+/// Base URL the tray should use to talk to the daemon.
+let daemonBaseURL = "http://127.0.0.1:\(daemonHTTPPort)"
+
 /// Send a non-blocking macOS notification (corner banner). Used for state
 /// drifts the user should know about but shouldn't be modal-interrupted by.
 @MainActor
@@ -60,7 +85,7 @@ final class InboxModel: ObservableObject {
     @Published var lastError: String? = nil
 
     private var timer: Timer?
-    private let endpoint = URL(string: "http://127.0.0.1:7878/inbox")!
+    private let endpoint = URL(string: "\(daemonBaseURL)/inbox")!
     private let pollInterval: TimeInterval = 5
     private let offlineThreshold = 3
     private var consecutiveFailures = 0
@@ -509,7 +534,7 @@ final class DaemonController: ObservableObject {
 
     /// Probe the dashboard until it returns 200 or the timeout elapses.
     private func waitForDaemonHealth(timeoutSec: Int) async -> Bool {
-        let url = URL(string: "http://127.0.0.1:7878/inbox")!
+        let url = URL(string: "\(daemonBaseURL)/inbox")!
         let deadline = Date().addingTimeInterval(TimeInterval(timeoutSec))
         while Date() < deadline {
             var req = URLRequest(url: url)
@@ -699,7 +724,7 @@ struct DropdownView: View {
             content
             Divider().padding(.horizontal, 4).padding(.vertical, 2)
             FooterButton(title: "Open dashboard", systemImage: "rectangle.on.rectangle") {
-                openURL(URL(string: "http://127.0.0.1:7878/")!)
+                openURL(URL(string: "\(daemonBaseURL)/")!)
             }
             FooterButton(title: "Preferences…", systemImage: "gearshape") {
                 WindowManager.shared.openPreferences(daemon: daemon)
