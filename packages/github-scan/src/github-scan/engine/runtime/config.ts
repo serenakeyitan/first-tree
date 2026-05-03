@@ -87,6 +87,20 @@ export interface DaemonConfig {
   searchLimit: number;
   /** Optional bound tree repo (`owner/repo`) supplied by the umbrella CLI. */
   treeRepo?: string;
+  /**
+   * GitHub login used as the daemon's "agent identity" — comments
+   * authored by this login are treated as the agent's own and skipped
+   * by the auto-revert own-comment guard (issue #360).
+   *
+   * Resolution order (highest wins):
+   *   1. CLI flag `--agent-login`
+   *   2. Env var `GITHUB_SCAN_AGENT_LOGIN`
+   *   3. Yaml key `agent_login` / `agentLogin`
+   *   4. Fallback (caller-resolved): the daemon's `gh auth` login
+   *
+   * When undefined here, callers must fall back to `gh auth` identity.
+   */
+  agentLogin?: string;
 }
 
 export const DAEMON_CONFIG_DEFAULTS: DaemonConfig = {
@@ -111,6 +125,7 @@ export interface DaemonCliOverrides {
   host?: string;
   maxParallel?: number;
   searchLimit?: number;
+  agentLogin?: string;
 }
 
 export interface LoadDaemonConfigDeps {
@@ -150,6 +165,8 @@ interface RawYamlConfig {
   maxParallel?: unknown;
   search_limit?: unknown;
   searchLimit?: unknown;
+  agent_login?: unknown;
+  agentLogin?: unknown;
 }
 
 function pickNumber(...values: unknown[]): number | undefined {
@@ -173,12 +190,7 @@ function pickString(...values: unknown[]): string | undefined {
 }
 
 function pickLogLevel(value: unknown): DaemonConfig["logLevel"] | undefined {
-  if (
-    value === "debug" ||
-    value === "info" ||
-    value === "warn" ||
-    value === "error"
-  ) {
+  if (value === "debug" || value === "info" || value === "warn" || value === "error") {
     return value;
   }
   return undefined;
@@ -195,14 +207,13 @@ function pickLogLevel(value: unknown): DaemonConfig["logLevel"] | undefined {
  *   GITHUB_SCAN_TASK_TIMEOUT_SECS
  *   GITHUB_SCAN_MAX_PARALLEL
  *   GITHUB_SCAN_SEARCH_LIMIT
+ *   GITHUB_SCAN_AGENT_LOGIN
  *
  * The yaml schema accepts snake_case (preferred) or camelCase keys.
  * Unknown yaml keys are ignored (forward-compat).
  */
 // oxlint-disable-next-line complexity
-export function loadGitHubScanDaemonConfig(
-  deps: LoadDaemonConfigDeps = {},
-): DaemonConfig {
+export function loadGitHubScanDaemonConfig(deps: LoadDaemonConfigDeps = {}): DaemonConfig {
   const env = deps.env ?? ((name) => process.env[name]);
   const readFile = deps.readFile ?? ((p) => readFileSync(p, "utf-8"));
   const fileExists = deps.fileExists ?? existsSync;
@@ -252,6 +263,8 @@ export function loadGitHubScanDaemonConfig(
       if (maxParallel !== undefined) config.maxParallel = maxParallel;
       const searchLimit = pickNumber(y.search_limit, y.searchLimit);
       if (searchLimit !== undefined) config.searchLimit = searchLimit;
+      const agentLogin = pickString(y.agent_login, y.agentLogin);
+      if (agentLogin !== undefined) config.agentLogin = agentLogin;
     }
     // First existing file wins — stop searching.
     break;
@@ -275,6 +288,8 @@ export function loadGitHubScanDaemonConfig(
   if (envMaxParallel !== undefined) config.maxParallel = envMaxParallel;
   const envSearchLimit = pickNumber(env("GITHUB_SCAN_SEARCH_LIMIT"));
   if (envSearchLimit !== undefined) config.searchLimit = envSearchLimit;
+  const envAgentLogin = pickString(env("GITHUB_SCAN_AGENT_LOGIN"));
+  if (envAgentLogin !== undefined) config.agentLogin = envAgentLogin;
 
   // 4. CLI overrides.
   if (cli.pollIntervalSec !== undefined && cli.pollIntervalSec > 0) {
@@ -285,11 +300,7 @@ export function loadGitHubScanDaemonConfig(
   }
   const cliLogLevel = pickLogLevel(cli.logLevel);
   if (cliLogLevel !== undefined) config.logLevel = cliLogLevel;
-  if (
-    cli.httpPort !== undefined &&
-    cli.httpPort > 0 &&
-    cli.httpPort < 65_536
-  ) {
+  if (cli.httpPort !== undefined && cli.httpPort > 0 && cli.httpPort < 65_536) {
     config.httpPort = cli.httpPort;
   }
   if (cli.host !== undefined && cli.host.length > 0) {
@@ -300,6 +311,9 @@ export function loadGitHubScanDaemonConfig(
   }
   if (cli.searchLimit !== undefined && cli.searchLimit > 0) {
     config.searchLimit = cli.searchLimit;
+  }
+  if (cli.agentLogin !== undefined && cli.agentLogin.length > 0) {
+    config.agentLogin = cli.agentLogin;
   }
 
   return treeRepo ? { ...config, treeRepo } : config;

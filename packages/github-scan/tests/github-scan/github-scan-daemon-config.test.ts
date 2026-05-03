@@ -178,11 +178,7 @@ httpPort: 8080
 
   it("reads max_parallel and search_limit from yaml", () => {
     const configPath = join(tmp, "config.yaml");
-    writeFileSync(
-      configPath,
-      "max_parallel: 4\nsearch_limit: 50\n",
-      "utf-8",
-    );
+    writeFileSync(configPath, "max_parallel: 4\nsearch_limit: 50\n", "utf-8");
     const cfg = loadGitHubScanDaemonConfig({
       env: () => undefined,
       configPath,
@@ -193,11 +189,7 @@ httpPort: 8080
 
   it("env vars override yaml for concurrency knobs", () => {
     const configPath = join(tmp, "config.yaml");
-    writeFileSync(
-      configPath,
-      "max_parallel: 4\nsearch_limit: 50\n",
-      "utf-8",
-    );
+    writeFileSync(configPath, "max_parallel: 4\nsearch_limit: 50\n", "utf-8");
     const envBag: Record<string, string> = {
       GITHUB_SCAN_MAX_PARALLEL: "30",
       GITHUB_SCAN_SEARCH_LIMIT: "25",
@@ -270,10 +262,76 @@ httpPort: 8080
     expect(cfg.httpPort).toBe(9090);
   });
 
+  // ------------------------------------------------------------------
+  // Issue #360: --agent-login (CLI flag / env / yaml) resolution.
+  //
+  // The four-tier order matches every other config knob: CLI > env >
+  // yaml > undefined (callers fall back to `gh auth` identity).
+  // ------------------------------------------------------------------
+
+  it("agentLogin defaults to undefined (gh auth fallback handled by caller)", () => {
+    const cfg = loadGitHubScanDaemonConfig({
+      env: () => undefined,
+      fileExists: () => false,
+      readFile: () => "",
+      homeDir: () => tmp,
+    });
+    expect(cfg.agentLogin).toBeUndefined();
+  });
+
+  it("reads agent_login from yaml", () => {
+    const configPath = join(tmp, "config.yaml");
+    writeFileSync(configPath, "agent_login: yaml-bot\n", "utf-8");
+    const cfg = loadGitHubScanDaemonConfig({
+      env: () => undefined,
+      configPath,
+    });
+    expect(cfg.agentLogin).toBe("yaml-bot");
+  });
+
+  it("accepts agentLogin (camelCase) from yaml", () => {
+    const configPath = join(tmp, "config.yaml");
+    writeFileSync(configPath, "agentLogin: yaml-bot\n", "utf-8");
+    const cfg = loadGitHubScanDaemonConfig({
+      env: () => undefined,
+      configPath,
+    });
+    expect(cfg.agentLogin).toBe("yaml-bot");
+  });
+
+  it("GITHUB_SCAN_AGENT_LOGIN env beats yaml agent_login", () => {
+    const configPath = join(tmp, "config.yaml");
+    writeFileSync(configPath, "agent_login: yaml-bot\n", "utf-8");
+    const cfg = loadGitHubScanDaemonConfig({
+      env: (name) => (name === "GITHUB_SCAN_AGENT_LOGIN" ? "env-bot" : undefined),
+      configPath,
+    });
+    expect(cfg.agentLogin).toBe("env-bot");
+  });
+
+  it("CLI --agent-login beats env and yaml", () => {
+    const configPath = join(tmp, "config.yaml");
+    writeFileSync(configPath, "agent_login: yaml-bot\n", "utf-8");
+    const cfg = loadGitHubScanDaemonConfig({
+      env: (name) => (name === "GITHUB_SCAN_AGENT_LOGIN" ? "env-bot" : undefined),
+      configPath,
+      cliOverrides: { agentLogin: "cli-bot" },
+    });
+    expect(cfg.agentLogin).toBe("cli-bot");
+  });
+
+  it("empty CLI agentLogin does not clobber env/yaml", () => {
+    const cfg = loadGitHubScanDaemonConfig({
+      env: (name) => (name === "GITHUB_SCAN_AGENT_LOGIN" ? "env-bot" : undefined),
+      configPath: join(tmp, "no-such-file.yaml"),
+      cliOverrides: { agentLogin: "" },
+    });
+    expect(cfg.agentLogin).toBe("env-bot");
+  });
+
   it("reads the bound tree repo from env", () => {
     const envBag: Record<string, string> = {
-      FIRST_TREE_GITHUB_SCAN_TREE_REPO:
-        "agent-team-foundation/first-tree-context",
+      FIRST_TREE_GITHUB_SCAN_TREE_REPO: "agent-team-foundation/first-tree-context",
     };
     const cfg = loadGitHubScanDaemonConfig({
       env: (name) => envBag[name],

@@ -77,11 +77,21 @@ const GITHUB_SCAN_INLINE_HELP: Partial<Record<string, string>> = {
     --task-timeout-secs <n>      Per-task timeout
     --max-parallel <n>           Max concurrent agent tasks
     --search-limit <n>           Max search-derived candidates per cycle
+    --agent-login <login>        GitHub login to treat as the agent (own-comment guard).
+                                 Falls back to GITHUB_SCAN_AGENT_LOGIN, then config-file
+                                 \`agent_login\`, then \`gh auth\` identity.
     --dry-run                    Schedule tasks without invoking agents
 `,
   daemon: `usage: first-tree github scan daemon [options]
 
   Alias for \`first-tree github scan run\`. Still requires \`--allow-repo\`.
+
+  Common options:
+    --allow-repo <csv>           Required: restrict work to owner/repo or owner/* patterns
+    --agent-login <login>        GitHub login to treat as the agent (own-comment guard).
+                                 Falls back to GITHUB_SCAN_AGENT_LOGIN, then config-file
+                                 \`agent_login\`, then \`gh auth\` identity.
+    --dry-run                    Schedule tasks without invoking agents
 `,
   "run-once": `usage: first-tree github scan run-once [options]
 
@@ -108,6 +118,9 @@ const GITHUB_SCAN_INLINE_HELP: Partial<Record<string, string>> = {
     --home <path>                Override runner home
     --profile <name>             Override daemon profile
     --allow-repo <csv>           Required: restrict work to owner/repo or owner/* patterns
+    --agent-login <login>        GitHub login to treat as the agent (own-comment guard).
+                                 Falls back to GITHUB_SCAN_AGENT_LOGIN, then config-file
+                                 \`agent_login\`, then \`gh auth\` identity.
 `,
   stop: `usage: first-tree github scan stop [options]
 
@@ -238,17 +251,10 @@ function normalizeArgs(args: readonly string[]): string[] {
 }
 
 // oxlint-disable-next-line complexity
-export async function runGitHubScan(
-  args: string[],
-  output: Output = console.log,
-): Promise<number> {
+export async function runGitHubScan(args: string[], output: Output = console.log): Promise<number> {
   const write = (text: string): void => output(text);
 
-  if (
-    args.length === 0 ||
-    (args[0] === "help" && args.length === 1) ||
-    isHelpInvocation(args)
-  ) {
+  if (args.length === 0 || (args[0] === "help" && args.length === 1) || isHelpInvocation(args)) {
     write(GITHUB_SCAN_USAGE);
     return 0;
   }

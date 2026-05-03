@@ -7,12 +7,7 @@
  *   - `daemon --backend=ts` invokes the TS runner; `--backend=rust` bridges
  */
 
-import {
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-} from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -21,10 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as identityModule from "../../src/github-scan/engine/daemon/identity.js";
 import * as httpModule from "../../src/github-scan/engine/daemon/http.js";
 import * as pollerModule from "../../src/github-scan/engine/daemon/poller.js";
-import {
-  parseDaemonArgs,
-  runDaemon,
-} from "../../src/github-scan/engine/daemon/runner-skeleton.js";
+import { parseDaemonArgs, runDaemon } from "../../src/github-scan/engine/daemon/runner-skeleton.js";
 import { extractBackendFlag } from "../../src/github-scan/cli.js";
 
 const tempRoots: string[] = [];
@@ -107,23 +99,14 @@ describe("parseDaemonArgs", () => {
   });
 
   it("drops invalid numeric values", () => {
-    const out = parseDaemonArgs([
-      "--poll-interval-secs",
-      "nope",
-      "--http-port",
-      "-1",
-    ]);
+    const out = parseDaemonArgs(["--poll-interval-secs", "nope", "--http-port", "-1"]);
     expect(out.pollIntervalSec).toBeUndefined();
     expect(out.httpPort).toBeUndefined();
   });
 
   it("parses --allow-repo in both space and = forms", () => {
-    expect(
-      parseDaemonArgs(["--allow-repo", "foo/bar,baz/*"]).allowRepo,
-    ).toBe("foo/bar,baz/*");
-    expect(
-      parseDaemonArgs(["--allow-repo=foo/bar"]).allowRepo,
-    ).toBe("foo/bar");
+    expect(parseDaemonArgs(["--allow-repo", "foo/bar,baz/*"]).allowRepo).toBe("foo/bar,baz/*");
+    expect(parseDaemonArgs(["--allow-repo=foo/bar"]).allowRepo).toBe("foo/bar");
   });
 
   it("drops empty --allow-repo values", () => {
@@ -132,16 +115,23 @@ describe("parseDaemonArgs", () => {
   });
 
   it("parses numeric equals-forms for max-parallel and search-limit", () => {
-    const out = parseDaemonArgs([
-      "--max-parallel=11",
-      "--search-limit=31",
-    ]);
+    const out = parseDaemonArgs(["--max-parallel=11", "--search-limit=31"]);
     expect(out.maxParallel).toBe(11);
     expect(out.searchLimit).toBe(31);
   });
 
   it("parses --dry-run as a boolean switch", () => {
     expect(parseDaemonArgs(["--dry-run"]).dryRun).toBe(true);
+  });
+
+  it("parses --agent-login in both space and = forms (issue #360)", () => {
+    expect(parseDaemonArgs(["--agent-login", "alt-bot"]).agentLogin).toBe("alt-bot");
+    expect(parseDaemonArgs(["--agent-login=alt-bot"]).agentLogin).toBe("alt-bot");
+  });
+
+  it("drops empty --agent-login values", () => {
+    expect(parseDaemonArgs(["--agent-login", ""]).agentLogin).toBeUndefined();
+    expect(parseDaemonArgs(["--agent-login="]).agentLogin).toBeUndefined();
   });
 });
 
@@ -197,9 +187,7 @@ describe("runDaemon end-to-end skeleton", () => {
       },
     });
     expect(code).toBe(1);
-    expect(logs.some((line) => line.includes("missing required --allow-repo"))).toBe(
-      true,
-    );
+    expect(logs.some((line) => line.includes("missing required --allow-repo"))).toBe(true);
   });
 
   it("exits cleanly when the injected AbortSignal is pre-aborted", async () => {
@@ -236,11 +224,11 @@ describe("runDaemon end-to-end skeleton", () => {
     process.env.PATH = "";
 
     vi.spyOn(identityModule, "resolveDaemonIdentity").mockReturnValue({
-        host: "github.com",
-        login: "tester",
-        gitProtocol: "https",
-        scopes: ["repo", "notifications"],
-      });
+      host: "github.com",
+      login: "tester",
+      gitProtocol: "https",
+      scopes: ["repo", "notifications"],
+    });
     vi.spyOn(identityModule, "identityHasRequiredScope").mockReturnValue(true);
     vi.spyOn(httpModule, "startHttpServer").mockImplementation(
       async ({ signal }: { signal?: AbortSignal }) => ({
@@ -279,21 +267,14 @@ describe("runDaemon end-to-end skeleton", () => {
     await new Promise((resolve) => setTimeout(resolve, 2_200));
 
     const runnerHome = join(githubScanDir, "runner");
-    const lockPath = join(
-      runnerHome,
-      "locks",
-      "github.com__tester__default",
-      "lock.env",
-    );
+    const lockPath = join(runnerHome, "locks", "github.com__tester__default", "lock.env");
     const runtimePath = join(runnerHome, "runtime", "status.env");
 
     expect(existsSync(lockPath)).toBe(true);
     expect(existsSync(runtimePath)).toBe(true);
 
     const lock = parseEnvFile(lockPath);
-    expect(Number(lock.heartbeat_epoch)).toBeGreaterThan(
-      Number(lock.started_epoch),
-    );
+    expect(Number(lock.heartbeat_epoch)).toBeGreaterThan(Number(lock.started_epoch));
     expect(lock.note).toBe("running");
 
     const runtime = parseEnvFile(runtimePath);
@@ -324,10 +305,7 @@ describe("cli dispatcher routes run / run-once / daemon to the TS runner", () =>
     }));
     const { runGitHubScan } = await import("../../src/github-scan/cli.js");
     await runGitHubScan(["daemon", "--poll-interval-secs", "30"], () => {});
-    expect(runDaemonSpy).toHaveBeenCalledWith(
-      ["--poll-interval-secs", "30"],
-      { once: false },
-    );
+    expect(runDaemonSpy).toHaveBeenCalledWith(["--poll-interval-secs", "30"], { once: false });
   });
 
   it("routes `run` to runDaemon with once=false and strips any stray --backend flag", async () => {

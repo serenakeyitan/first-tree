@@ -74,6 +74,13 @@ export interface DaemonCliOverrides {
   allowRepo?: string;
   /** When true, schedule tasks without invoking agents. */
   dryRun?: boolean;
+  /**
+   * GitHub login to treat as the daemon's agent identity, independent
+   * of `gh auth` (issue #360). When set, auto-revert's own-comment
+   * guard uses this value instead of `gh auth whoami`. Falls back to
+   * `gh auth` when unset.
+   */
+  agentLogin?: string;
 }
 
 export interface DaemonRunOptions {
@@ -146,6 +153,11 @@ export function parseDaemonArgs(argv: readonly string[]): DaemonCliOverrides {
     if (arg && arg.startsWith("--search-limit=")) {
       const value = Number.parseInt(arg.slice("--search-limit=".length), 10);
       if (Number.isFinite(value) && value > 0) overrides.searchLimit = value;
+      continue;
+    }
+    if (arg && arg.startsWith("--agent-login=")) {
+      const value = arg.slice("--agent-login=".length);
+      if (value.length > 0) overrides.agentLogin = value;
       continue;
     }
     switch (arg) {
@@ -221,6 +233,14 @@ export function parseDaemonArgs(argv: readonly string[]): DaemonCliOverrides {
         if (value !== undefined) {
           const n = Number.parseInt(value, 10);
           if (Number.isFinite(n) && n > 0) overrides.searchLimit = n;
+          advance();
+        }
+        break;
+      }
+      case "--agent-login": {
+        const value = next();
+        if (value !== undefined && value.length > 0) {
+          overrides.agentLogin = value;
           advance();
         }
         break;
@@ -389,8 +409,14 @@ export async function runDaemon(
   const runtimeTicker = setInterval(() => publishRuntimeStatus(), runtimeRefreshMs);
   runtimeTicker.unref?.();
 
+  const resolvedAgentLogin = config.agentLogin ?? identity?.login;
+  if (config.agentLogin && config.agentLogin !== identity?.login) {
+    logger.info(
+      `github-scan daemon: agent-login overridden to '${config.agentLogin}' (gh auth=${identity?.login ?? "unknown"})`,
+    );
+  }
   logger.info(
-    `github-scan daemon: poll-interval=${config.pollIntervalSec}s host=${config.host} http-port=${config.httpPort} max-parallel=${config.maxParallel} search-limit=${config.searchLimit} allow-repo=${repoFilter.isEmpty() ? "all" : repoFilter.displayPatterns()} dry-run=${cliOverrides.dryRun ? "true" : "false"}`,
+    `github-scan daemon: poll-interval=${config.pollIntervalSec}s host=${config.host} http-port=${config.httpPort} max-parallel=${config.maxParallel} search-limit=${config.searchLimit} allow-repo=${repoFilter.isEmpty() ? "all" : repoFilter.displayPatterns()} dry-run=${cliOverrides.dryRun ? "true" : "false"} agent-login=${resolvedAgentLogin ?? "unset"}`,
   );
 
   // Phase 3c: shared in-process bus drives SSE + broker task events.
@@ -553,7 +579,14 @@ export async function runDaemon(
       // One-shot: run a single poll cycle, then wait for the
       // dispatcher to drain. Also run one candidate-search cycle so
       // assigned/review-requested work is not lost before shutdown.
-      await runPollerOnce(config, paths, repoFilter, controller.signal, logger, identity?.login);
+      await runPollerOnce(
+        config,
+        paths,
+        repoFilter,
+        controller.signal,
+        logger,
+        config.agentLogin ?? identity?.login,
+      );
       if (candidateRuntime) {
         const outcome = await runCandidateCycle(
           {
@@ -577,7 +610,7 @@ export async function runDaemon(
         repoFilter,
         signal: controller.signal,
         logger,
-        agentLogin: identity?.login,
+        agentLogin: config.agentLogin ?? identity?.login,
       });
     }
   } catch (err) {

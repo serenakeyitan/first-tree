@@ -162,6 +162,29 @@ describe("shouldAutoRevertHuman — issue #358 guards", () => {
     ).toBe(false);
   });
 
+  it("(issue #360) own-comment guard uses the *resolved* agent identity, not the daemon's gh auth user", () => {
+    // Scenario: the daemon is authed as `serenakeyitan` (operator) but
+    // is configured with `--agent-login first-tree-bot`. The operator
+    // (under their own gh login) leaves a real reply on the labeled
+    // item. Since the resolved agent identity is `first-tree-bot`, the
+    // operator's comment must NOT be filtered as own-comment, and the
+    // revert must fire.
+    const comments: IssueComment[] = [
+      {
+        author: "serenakeyitan",
+        body: "Please proceed with option A — confirmed in office hours, go ahead.",
+        createdAt: "2026-04-30T11:05:00Z",
+      },
+    ];
+    expect(
+      shouldAutoRevertHuman({
+        agentLogin: "first-tree-bot", // resolved identity, NOT the gh auth user
+        labelAppliedAt: LABEL_TS,
+        comments,
+      }),
+    ).toBe(true);
+  });
+
   it("agent-login comparison is case-insensitive (GitHub logins are case-insensitive)", () => {
     const comments: IssueComment[] = [
       {
