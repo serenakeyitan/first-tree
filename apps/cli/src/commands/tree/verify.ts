@@ -4,9 +4,10 @@ import { join, resolve } from "node:path";
 import type { Command } from "commander";
 
 import type { CommandContext, SubcommandModule } from "../types.js";
-import { TREE_PROGRESS_FILE, TREE_STATE_FILE, TREE_VERSION_FILE } from "./binding-state.js";
+import { TREE_PROGRESS_FILE, TREE_VERSION_FILE } from "./binding-state.js";
 import { readSourceBindingContract } from "./binding-contract.js";
 import { resolveRepoRoot } from "./shared.js";
+import { readTreeIdentityContract } from "./tree-identity.js";
 import { runValidateMembers } from "./validate-members.js";
 import { runValidateNodes } from "./validate-nodes.js";
 
@@ -85,7 +86,7 @@ function formatSourceRepoError(targetRoot: string): string {
 function verifyTreeRoot(targetRoot: string): VerifySummary {
   if (
     readSourceBindingContract(targetRoot) !== undefined &&
-    !existsSync(join(targetRoot, TREE_STATE_FILE))
+    readTreeIdentityContract(targetRoot) === undefined
   ) {
     throw new Error(formatSourceRepoError(targetRoot));
   }
@@ -146,10 +147,10 @@ function verifyTreeRoot(targetRoot: string): VerifySummary {
         ...(rootNodeErrors.length === 0 ? {} : { errors: rootNodeErrors }),
       },
       treeState: {
-        ok: existsSync(join(targetRoot, TREE_STATE_FILE)),
-        ...(existsSync(join(targetRoot, TREE_STATE_FILE))
+        ok: readTreeIdentityContract(targetRoot) !== undefined,
+        ...(readTreeIdentityContract(targetRoot) !== undefined
           ? {}
-          : { errors: [`.first-tree/tree.json is missing.`] }),
+          : { errors: ["Managed tree identity is missing from AGENTS.md / CLAUDE.md."] }),
       },
     },
     ok: false,

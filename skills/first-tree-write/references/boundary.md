@@ -56,7 +56,8 @@ When sync hands off to write:
 
 ## What Both Skills Share
 
-- The bound tree repo from `.first-tree/source.json`.
+- The bound tree repo from the managed First Tree integration block in
+  `AGENTS.md` / `CLAUDE.md`.
 - The "code is the ground truth" default with the `decisionLocksCode`
   escape hatch.
 - The requirement to run `first-tree tree verify` before any final

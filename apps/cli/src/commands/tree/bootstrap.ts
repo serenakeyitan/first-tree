@@ -4,16 +4,12 @@ import { dirname, join, resolve } from "node:path";
 import type { Command } from "commander";
 
 import type { CommandContext, SubcommandModule } from "../types.js";
-import {
-  TREE_PROGRESS_FILE,
-  TREE_VERSION_FILE,
-  buildTreeId,
-  writeTreeState,
-} from "./binding-state.js";
+import { TREE_PROGRESS_FILE, TREE_VERSION_FILE } from "./binding-state.js";
 import { ensureAgentContextHooks, formatAgentContextHookMessages } from "./agent-context-hooks.js";
 import { copyCanonicalSkills } from "./skill-lib.js";
 import { syncTreeSourceRepoIndex } from "./source-repo-index.js";
 import { ensureWhitepaperSymlink, upsertLocalTreeGitIgnore } from "./source-integration.js";
+import { syncTreeIdentityFiles } from "./tree-identity.js";
 import { isGitRepoRoot, repoNameForRoot, runCommand } from "./shared.js";
 import {
   renderCodeReviewerAgentTemplate,
@@ -120,8 +116,7 @@ export function bootstrapTreeRoot(
   writeIfMissing(join(targetRoot, TREE_VERSION_FILE), "0.4.0-alpha.1");
   writeIfMissing(join(targetRoot, TREE_PROGRESS_FILE), renderTreeProgress());
 
-  writeTreeState(targetRoot, {
-    treeId: buildTreeId(treeRepoName),
+  syncTreeIdentityFiles(targetRoot, {
     treeMode,
     treeRepoName,
   });

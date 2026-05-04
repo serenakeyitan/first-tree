@@ -151,7 +151,7 @@ configuration, it does not start agents.
 
 The onboarding flow ends with:
 
-- a binding present in `<source>/.first-tree/source.json`
+- a binding present in `<source>/AGENTS.md` or `<source>/CLAUDE.md`
 - a tree at `<tree-root>` that passes `tree verify`
 - the GitHub Scan daemon running and reporting `lock: present`
 - agent templates the user has approved

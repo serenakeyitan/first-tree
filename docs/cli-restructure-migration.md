@@ -52,7 +52,9 @@ This workspace now enforces that rule at the CLI entry for:
 Resolution order:
 
 1. `--tree-repo <owner/repo>`
-2. `.first-tree/source.json` discovered from the current working directory upward
+2. managed First Tree integration block in `AGENTS.md` / `CLAUDE.md`,
+   discovered from the current working directory upward
+3. legacy `.first-tree/source.json` fallback during migration
 
 If neither exists, the command stops with an actionable error that points the
 user to `first-tree tree bind ...` or `--tree-repo <owner/repo>`.

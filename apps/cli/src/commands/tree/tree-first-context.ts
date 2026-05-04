@@ -1,9 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { TREE_SOURCE_REPOS_FILE, readTreeState } from "./binding-state.js";
+import { TREE_SOURCE_REPOS_FILE } from "./binding-state.js";
 import { readSourceBindingContract } from "./binding-contract.js";
 import { buildSourceRepoIndexTable } from "./source-repo-index.js";
+import { readTreeIdentityContract } from "./tree-identity.js";
 import { listKnownTreeCodeRepos } from "./tree-repo-registry.js";
 
 const ROOT_NODE_FILE = "NODE.md";
@@ -51,7 +52,7 @@ export function buildTreeFirstContextBundle(currentRoot: string): TreeFirstConte
 }
 
 function resolveTreeContextRoot(currentRoot: string): ResolvedTreeContextRoot | null {
-  if (readTreeState(currentRoot) !== null) {
+  if (readTreeIdentityContract(currentRoot) !== undefined) {
     return {
       entrypointLabel: "tree repo root",
       treeRoot: currentRoot,
@@ -64,7 +65,7 @@ function resolveTreeContextRoot(currentRoot: string): ResolvedTreeContextRoot | 
   }
 
   const siblingRoot = join(dirname(currentRoot), sourceBinding.treeRepoName);
-  if (readTreeState(siblingRoot) !== null) {
+  if (readTreeIdentityContract(siblingRoot) !== undefined) {
     return {
       currentEntrypoint: sourceBinding.entrypoint,
       entrypointLabel: "bound source/workspace root",
@@ -73,7 +74,7 @@ function resolveTreeContextRoot(currentRoot: string): ResolvedTreeContextRoot | 
   }
 
   const tempRoot = join(currentRoot, ".first-tree", "tmp", sourceBinding.treeRepoName);
-  if (readTreeState(tempRoot) !== null) {
+  if (readTreeIdentityContract(tempRoot) !== undefined) {
     return {
       currentEntrypoint: sourceBinding.entrypoint,
       entrypointLabel: "bound source/workspace root",

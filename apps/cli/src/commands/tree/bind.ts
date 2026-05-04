@@ -12,10 +12,9 @@ import {
   TreeMode,
   buildTreeId,
   deriveDefaultEntrypoint,
-  readTreeState,
-  writeTreeState,
 } from "./binding-state.js";
 import { copyCanonicalSkills } from "./skill-lib.js";
+import { bootstrapTreeRoot } from "./bootstrap.js";
 import { syncTreeSourceRepoIndex } from "./source-repo-index.js";
 import {
   ensureWhitepaperSymlink,
@@ -30,6 +29,7 @@ import {
   resolveRepoRoot,
   runCommand,
 } from "./shared.js";
+import { readTreeIdentityContract, syncTreeIdentityFiles } from "./tree-identity.js";
 import { upsertTreeCodeRepoRegistry } from "./tree-repo-registry.js";
 
 type BindModeOption = SourceBindingMode | "source";
@@ -50,7 +50,6 @@ type BindSummary = {
   sourceRoot: string;
   treeMode: TreeMode;
   treeRoot: string;
-  treeStatePath: string;
   workspaceId?: string;
 };
 
@@ -204,7 +203,8 @@ function ensureTreeCheckout(
     );
   }
 
-  treeUrl = treeUrl ?? readGitRemoteUrl(treeRoot) ?? readTreeState(treeRoot)?.published?.remoteUrl;
+  treeUrl =
+    treeUrl ?? readGitRemoteUrl(treeRoot) ?? readTreeIdentityContract(treeRoot)?.publishedTreeUrl;
 
   return {
     treeRepoName: repoNameForRoot(treeRoot),
@@ -220,6 +220,12 @@ export function bindSourceRoot(
 ): BindSummary {
   const treeResolution = ensureTreeCheckout(commandCwd, sourceRoot, options);
   const binding = deriveBindingContext(sourceRoot, treeResolution, options);
+
+  if (readTreeIdentityContract(treeResolution.treeRoot) === undefined) {
+    bootstrapTreeRoot(treeResolution.treeRoot, {
+      treeMode: binding.treeMode,
+    });
+  }
 
   copyCanonicalSkills(sourceRoot);
   copyCanonicalSkills(treeResolution.treeRoot);
@@ -238,7 +244,6 @@ export function bindSourceRoot(
     treeResolution.treeRoot,
     treeResolution.treeRepoName,
     binding.treeMode,
-    binding.treeReference.treeId,
     treeResolution.treeUrl,
   );
 
@@ -254,7 +259,6 @@ export function bindSourceRoot(
     sourceRoot,
     treeMode: binding.treeMode,
     treeRoot: treeResolution.treeRoot,
-    treeStatePath: join(treeResolution.treeRoot, ".first-tree", "tree.json"),
     ...(binding.workspaceId ? { workspaceId: binding.workspaceId } : {}),
   };
 }
@@ -294,15 +298,13 @@ function writeBoundTreeState(
   treeRoot: string,
   treeRepoName: string,
   treeMode: TreeMode,
-  treeId: string,
   resolvedTreeUrl?: string,
 ): void {
-  const existingTreeState = readTreeState(treeRoot);
-  const publishedRemote = resolvedTreeUrl ?? existingTreeState?.published?.remoteUrl;
+  const existingIdentity = readTreeIdentityContract(treeRoot);
+  const publishedTreeUrl = resolvedTreeUrl ?? existingIdentity?.publishedTreeUrl;
 
-  writeTreeState(treeRoot, {
-    ...(publishedRemote ? { published: { remoteUrl: publishedRemote } } : {}),
-    treeId,
+  syncTreeIdentityFiles(treeRoot, {
+    ...(publishedTreeUrl ? { publishedTreeUrl } : {}),
     treeMode,
     treeRepoName,
   });
@@ -330,7 +332,7 @@ function runBindCommand(context: CommandContext): void {
     }
     console.log("");
     console.log("  Updated AGENTS.md / CLAUDE.md managed binding blocks.");
-    console.log(`  Wrote ${summary.treeStatePath}.`);
+    console.log("  Updated tree repo managed identity block.");
     console.log("  Updated tree repo managed code-repo registry.");
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));

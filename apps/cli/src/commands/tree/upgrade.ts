@@ -5,15 +5,11 @@ import type { Command } from "commander";
 
 import type { CommandContext, SubcommandModule } from "../types.js";
 import { ensureAgentContextHooks, formatAgentContextHookMessages } from "./agent-context-hooks.js";
-import {
-  removeSourceState,
-  TREE_VERSION_FILE,
-  readTreeState,
-  writeTreeState,
-} from "./binding-state.js";
+import { removeSourceState, TREE_VERSION_FILE } from "./binding-state.js";
 import { readSourceBindingContract } from "./binding-contract.js";
 import { readBundledSkillVersion, copyCanonicalSkills } from "./skill-lib.js";
 import { syncTreeSourceRepoIndex } from "./source-repo-index.js";
+import { readTreeIdentityContract, syncTreeIdentityFiles } from "./tree-identity.js";
 import {
   ensureWhitepaperSymlink,
   upsertLocalTreeGitIgnore,
@@ -73,16 +69,16 @@ function upgradeSourceRoot(targetRoot: string, bundledSkillVersion: string): Upg
 }
 
 function upgradeTreeRoot(targetRoot: string, bundledSkillVersion: string): UpgradeSummary {
-  const treeState = readTreeState(targetRoot);
-  if (treeState === null) {
-    throw new Error("No `.first-tree/tree.json` was found for this tree root.");
+  const treeIdentity = readTreeIdentityContract(targetRoot);
+  if (treeIdentity === undefined) {
+    throw new Error("No managed tree identity was found in `AGENTS.md` or `CLAUDE.md`.");
   }
 
   copyCanonicalSkills(targetRoot);
   ensureWhitepaperSymlink(targetRoot);
   upsertLocalTreeGitIgnore(targetRoot);
   writeFileSync(join(targetRoot, TREE_VERSION_FILE), `${bundledSkillVersion}\n`);
-  writeTreeState(targetRoot, treeState);
+  syncTreeIdentityFiles(targetRoot, treeIdentity);
   syncTreeSourceRepoIndex(targetRoot);
   ensureAgentContextHooks(targetRoot);
 
@@ -95,9 +91,9 @@ function upgradeTreeRoot(targetRoot: string, bundledSkillVersion: string): Upgra
 
 export function upgradeTargetRoot(targetRoot: string): UpgradeSummary {
   const bundledSkillVersion = readBundledSkillVersion();
-  const treeState = readTreeState(targetRoot);
+  const treeIdentity = readTreeIdentityContract(targetRoot);
 
-  if (treeState !== null) {
+  if (treeIdentity !== undefined) {
     return upgradeTreeRoot(targetRoot, bundledSkillVersion);
   }
 

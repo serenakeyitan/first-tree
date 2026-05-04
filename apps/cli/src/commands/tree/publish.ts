@@ -3,15 +3,11 @@ import { dirname, join, resolve } from "node:path";
 import type { Command } from "commander";
 
 import type { CommandContext, SubcommandModule } from "../types.js";
-import {
-  removeSourceState,
-  TREE_SOURCE_REPOS_FILE,
-  readTreeState,
-  writeTreeState,
-} from "./binding-state.js";
+import { removeSourceState, TREE_SOURCE_REPOS_FILE } from "./binding-state.js";
 import { readSourceBindingContract } from "./binding-contract.js";
 import { syncTreeSourceRepoIndex } from "./source-repo-index.js";
 import { upsertSourceIntegrationFiles } from "./source-integration.js";
+import { readTreeIdentityContract, syncTreeIdentityFiles } from "./tree-identity.js";
 import { listKnownTreeCodeRepos } from "./tree-repo-registry.js";
 import {
   isGitRepoRoot,
@@ -66,7 +62,7 @@ function runPublishCommandLine(command: string, args: string[], cwd: string): st
 
 function resolveTreeRoot(options: PublishOptions): string {
   const candidate = options.treePath ? resolve(process.cwd(), options.treePath) : process.cwd();
-  if (readTreeState(candidate) === null) {
+  if (readTreeIdentityContract(candidate) === undefined) {
     throw new Error(
       "Run `first-tree tree publish` from a tree repo, or pass `--tree-path <path>`.",
     );
@@ -79,7 +75,7 @@ function resolveTreeSlug(
   options: PublishOptions,
 ): { cloneUrl: string; slug: string } {
   const existingRemote =
-    readTreeState(treeRoot)?.published?.remoteUrl ?? readGitRemoteUrl(treeRoot);
+    readTreeIdentityContract(treeRoot)?.publishedTreeUrl ?? readGitRemoteUrl(treeRoot);
   const existingParsed = existingRemote ? parseGitHubRemoteUrl(existingRemote) : null;
   if (existingParsed !== null) {
     return {
@@ -215,15 +211,13 @@ export function publishTreeRoot(treeRoot: string, options: PublishOptions = {}):
   ensureTreeRemote(treeRoot, cloneUrl, commandRunner);
   ensureGitHubRepo(treeRoot, slug, commandRunner);
   pushTree(treeRoot, commandRunner);
-  const treeState = readTreeState(treeRoot);
-  if (treeState === null) {
-    throw new Error("Tree state disappeared during publish.");
+  const treeIdentity = readTreeIdentityContract(treeRoot);
+  if (treeIdentity === undefined) {
+    throw new Error("Tree identity disappeared during publish.");
   }
-  writeTreeState(treeRoot, {
-    ...treeState,
-    published: {
-      remoteUrl: cloneUrl,
-    },
+  syncTreeIdentityFiles(treeRoot, {
+    ...treeIdentity,
+    publishedTreeUrl: cloneUrl,
   });
 
   const refreshedSourceRoots = refreshBoundSourceRoots(

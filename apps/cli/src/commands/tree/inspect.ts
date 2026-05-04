@@ -3,6 +3,7 @@ import { dirname, join, resolve } from "node:path";
 
 import type { CommandContext, SubcommandModule } from "../types.js";
 import { findUpwardsManagedSourceBinding, parseGitHubRepoReference } from "./binding-contract.js";
+import { findUpwardsManagedTreeIdentity } from "./tree-identity.js";
 
 type InspectClassification = "tree-repo" | "workspace-root" | "source-repo" | "git-repo" | "folder";
 type InspectRole =
@@ -91,6 +92,20 @@ function summarizeManagedBinding(
     ...(binding.treeRepoSlug ? { treeRepo: binding.treeRepoSlug } : {}),
     ...(binding.treeRepoName ? { treeRepoName: binding.treeRepoName } : {}),
     ...(binding.treeRepoUrl ? { treeRemoteUrl: binding.treeRepoUrl } : {}),
+  };
+}
+
+function summarizeManagedTreeIdentity(
+  identity: ReturnType<typeof findUpwardsManagedTreeIdentity>,
+): BindingSummary | undefined {
+  if (identity === undefined) {
+    return undefined;
+  }
+
+  return {
+    ...(identity.treeMode ? { treeMode: identity.treeMode } : {}),
+    ...(identity.treeRepoName ? { treeRepoName: identity.treeRepoName } : {}),
+    ...(identity.publishedTreeUrl ? { treeRemoteUrl: identity.publishedTreeUrl } : {}),
   };
 }
 
@@ -296,25 +311,32 @@ function formatInspectResult(result: InspectResult): string {
 
 export function inspectCurrentWorkingTree(cwd = process.cwd()): InspectResult {
   const managedBinding = findUpwardsManagedSourceBinding(cwd);
+  const managedTreeIdentity = findUpwardsManagedTreeIdentity(cwd);
   const sourceStatePath = findUpwards(cwd, ".first-tree/source.json");
   const treeStatePath = findUpwards(cwd, ".first-tree/tree.json");
   const gitMarkerPath = findUpwards(cwd, ".git");
   const rootPath = resolveInspectRootPath(
     cwd,
-    managedBinding ? dirname(managedBinding.path) : undefined,
+    managedBinding
+      ? dirname(managedBinding.path)
+      : managedTreeIdentity
+        ? dirname(managedTreeIdentity.path)
+        : undefined,
     sourceStatePath,
     treeStatePath,
     gitMarkerPath,
   );
   const binding =
-    summarizeManagedBinding(managedBinding) ?? readLegacyBindingSummary(sourceStatePath);
+    summarizeManagedBinding(managedBinding) ??
+    summarizeManagedTreeIdentity(managedTreeIdentity) ??
+    readLegacyBindingSummary(sourceStatePath);
   const hasNode = existsSync(join(rootPath, "NODE.md"));
   const hasMembersNode = existsSync(join(rootPath, "members", "NODE.md"));
   const treeRepoName = readTreeRepoName(treeStatePath);
   const workspaceLikeRoot = looksLikeWorkspaceRoot(rootPath);
 
   const classification = deriveClassification(
-    treeStatePath,
+    managedTreeIdentity?.path ?? treeStatePath,
     hasNode,
     hasMembersNode,
     binding,

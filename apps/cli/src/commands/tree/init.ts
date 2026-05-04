@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 import type { Command } from "commander";
@@ -8,6 +7,7 @@ import { bindSourceRoot } from "./bind.js";
 import { bootstrapTreeRoot } from "./bootstrap.js";
 import { inspectCurrentWorkingTree } from "./inspect.js";
 import { repoNameForRoot } from "./shared.js";
+import { readTreeIdentityContract } from "./tree-identity.js";
 import { syncWorkspaceMembersFromRoot } from "./workspace-sync.js";
 
 type InitOptions = {
@@ -107,7 +107,7 @@ export function initializeSourceRoot(
   const treeMode = resolveTreeMode(options, scope);
   const treeRoot = resolveTreeRoot(sourceRoot, options, treeMode);
 
-  if (treeRoot !== undefined && !existsSync(join(treeRoot, ".first-tree", "tree.json"))) {
+  if (treeRoot !== undefined && readTreeIdentityContract(treeRoot) === undefined) {
     bootstrapTreeRoot(treeRoot, {
       treeMode,
     });

@@ -19,7 +19,8 @@ The restructured CLI is centered on three ideas:
 4. If your current root is a workspace, use `first-tree tree workspace sync`
    after adding new child repos.
 5. Before starting `first-tree github scan`, make sure a binding exists in
-   `.first-tree/source.json`, or pass `--tree-repo <owner/repo>` explicitly.
+   the managed First Tree integration block in `AGENTS.md` or `CLAUDE.md`, or
+   pass `--tree-repo <owner/repo>` explicitly.
 
 ## Current Workspace Reality
 

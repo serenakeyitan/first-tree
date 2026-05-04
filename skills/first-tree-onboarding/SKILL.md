@@ -57,9 +57,10 @@ to the right next action.
 - Never proceed past step 3 if `first-tree tree verify` fails. Report the
   failures and stop.
 - Never run `first-tree github scan install` until a binding exists in
-  `.first-tree/source.json`. The CLI will fail closed; do not bypass it.
-- Never edit `.first-tree/source.json` or `.first-tree/tree.json` by hand.
-  Re-run `tree init` with the right flags instead.
+  the managed First Tree integration block in `AGENTS.md` or `CLAUDE.md`.
+  The CLI will fail closed; do not bypass it.
+- Never edit managed First Tree integration / tree identity / code-repo
+  registry blocks by hand. Re-run the relevant `tree` command instead.
 - Never start any agent runtime in step 5. Step 5 writes templates only; the
   daemon spawns agents.
 - Never claim onboarding succeeded without a final `tree skill doctor` and
