@@ -175,6 +175,7 @@ describe("first-tree CLI", () => {
     expect(await readFile(resolve(sourceRoot, ".first-tree", "source.json"), "utf8")).toContain(
       '"treeRepoName"',
     );
+    expect(await readFile(resolve(sourceRoot, "AGENTS.md"), "utf8")).toContain("managed-block-v1");
     expect(await readFile(resolve(treeRoot, ".first-tree", "tree.json"), "utf8")).toContain(
       '"treeRepoName"',
     );

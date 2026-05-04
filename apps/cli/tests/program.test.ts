@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { withCommandContext } from "../src/commands/context.js";
 import { inspectCurrentWorkingTree } from "../src/commands/tree/inspect.js";
+import { buildSourceIntegrationBlock } from "../src/commands/tree/source-integration.js";
 import { statusCommand as treeStatusCommand } from "../src/commands/tree/status.js";
 import type { CommandAction, CommandContext, GlobalOptions } from "../src/commands/types.js";
 import { createProgram, main } from "../src/index.js";
@@ -629,23 +630,17 @@ describe("first-tree program", () => {
     }
   });
 
-  it("resolves github scan binding from .first-tree/source.json", async () => {
+  it("resolves github scan binding from managed AGENTS.md metadata", async () => {
     const root = makeTempDir();
-    mkdirSync(join(root, ".first-tree"), { recursive: true });
     writeFileSync(
-      join(root, ".first-tree", "source.json"),
-      `${JSON.stringify(
-        {
-          bindingMode: "shared-source",
-          scope: "repo",
-          tree: {
-            remoteUrl: "https://github.com/acme/context.git",
-            treeRepoName: "context",
-          },
-        },
-        null,
-        2,
-      )}\n`,
+      join(root, "AGENTS.md"),
+      `${buildSourceIntegrationBlock("context", {
+        bindingMode: "shared-source",
+        entrypoint: "/repos/app",
+        treeMode: "shared",
+        treeRepoName: "context",
+        treeRepoUrl: "https://github.com/acme/context.git",
+      })}\n`,
     );
 
     runGitHubScanMock.mockClear();

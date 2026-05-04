@@ -29,7 +29,8 @@ const TREE_ONBOARDING_GUIDE = `first-tree tree help onboarding
 3. Use \`first-tree tree init\` for the high-level onboarding flow.
 4. If this root is a workspace, follow with \`first-tree tree workspace sync\`.
 5. Before starting \`first-tree github scan\`, make sure a binding exists in
-   \`.first-tree/source.json\` or pass \`--tree-repo <owner/repo>\`.
+   the managed First Tree integration block in \`AGENTS.md\` or \`CLAUDE.md\`,
+   or pass \`--tree-repo <owner/repo>\`.
 `;
 
 const treeSubcommands: SubcommandModule[] = [
