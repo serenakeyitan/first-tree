@@ -6,13 +6,13 @@ import type { CommandContext, SubcommandModule } from "../types.js";
 import {
   removeSourceState,
   TREE_SOURCE_REPOS_FILE,
-  listTreeBindings,
   readTreeState,
   writeTreeState,
 } from "./binding-state.js";
 import { readSourceBindingContract } from "./binding-contract.js";
 import { syncTreeSourceRepoIndex } from "./source-repo-index.js";
 import { upsertSourceIntegrationFiles } from "./source-integration.js";
+import { listKnownTreeCodeRepos } from "./tree-repo-registry.js";
 import {
   isGitRepoRoot,
   parseGitHubRemoteUrl,
@@ -103,8 +103,8 @@ function resolveTreeSlug(
     };
   }
 
-  for (const binding of listTreeBindings(treeRoot)) {
-    const parsed = binding.remoteUrl ? parseGitHubRemoteUrl(binding.remoteUrl) : null;
+  for (const repo of listKnownTreeCodeRepos(treeRoot)) {
+    const parsed = parseGitHubRemoteUrl(repo.url);
     if (parsed !== null) {
       return {
         cloneUrl: `https://github.com/${parsed.owner}/${repoNameForRoot(treeRoot)}.git`,
@@ -170,8 +170,8 @@ function resolveLocalSourceRoots(treeRoot: string, options: PublishOptions): str
   }
 
   const roots: string[] = [];
-  for (const binding of listTreeBindings(treeRoot)) {
-    const sibling = join(dirname(treeRoot), binding.sourceName);
+  for (const repo of listKnownTreeCodeRepos(treeRoot)) {
+    const sibling = join(dirname(treeRoot), repo.name);
     if (isGitRepoRoot(sibling)) {
       roots.push(sibling);
     }

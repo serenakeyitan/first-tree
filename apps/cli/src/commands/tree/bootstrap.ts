@@ -5,7 +5,6 @@ import type { Command } from "commander";
 
 import type { CommandContext, SubcommandModule } from "../types.js";
 import {
-  TREE_BINDINGS_DIR,
   TREE_PROGRESS_FILE,
   TREE_VERSION_FILE,
   buildTreeId,
@@ -120,7 +119,6 @@ export function bootstrapTreeRoot(
   writeIfMissing(join(targetRoot, ".first-tree", "org.yaml"), renderOrgConfigPlaceholder());
   writeIfMissing(join(targetRoot, TREE_VERSION_FILE), "0.4.0-alpha.1");
   writeIfMissing(join(targetRoot, TREE_PROGRESS_FILE), renderTreeProgress());
-  mkdirSync(join(targetRoot, TREE_BINDINGS_DIR), { recursive: true });
 
   writeTreeState(targetRoot, {
     treeId: buildTreeId(treeRepoName),

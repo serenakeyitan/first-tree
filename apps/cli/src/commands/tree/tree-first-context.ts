@@ -1,9 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { TREE_SOURCE_REPOS_FILE, listTreeBindings, readTreeState } from "./binding-state.js";
+import { TREE_SOURCE_REPOS_FILE, readTreeState } from "./binding-state.js";
 import { readSourceBindingContract } from "./binding-contract.js";
 import { buildSourceRepoIndexTable } from "./source-repo-index.js";
+import { listKnownTreeCodeRepos } from "./tree-repo-registry.js";
 
 const ROOT_NODE_FILE = "NODE.md";
 
@@ -31,10 +32,10 @@ export function buildTreeFirstContextBundle(currentRoot: string): TreeFirstConte
   }
 
   const rootNode = readFileSync(nodePath, "utf-8").trimEnd();
-  const bindings = listTreeBindings(resolved.treeRoot);
+  const repos = listKnownTreeCodeRepos(resolved.treeRoot);
   const sections = [rootNode];
   const repoContext = buildRepoContextSection(
-    bindings,
+    repos,
     resolved.currentEntrypoint,
     resolved.entrypointLabel,
   );
@@ -96,24 +97,24 @@ function readFallbackLocalNode(currentRoot: string): TreeFirstContextBundle | nu
 }
 
 function buildRepoContextSection(
-  bindings: ReturnType<typeof listTreeBindings>,
+  repos: ReturnType<typeof listKnownTreeCodeRepos>,
   currentEntrypoint: string | undefined,
   entrypointLabel: string,
 ): string | null {
-  if (bindings.length === 0 && currentEntrypoint === undefined) {
+  if (repos.length === 0 && currentEntrypoint === undefined) {
     return null;
   }
 
   const lines = [
     "## Tree-First Cross-Repo Working Context",
     "",
-    "- Repo index source: `.first-tree/bindings/*.json`",
+    "- Repo index source: managed code-repo registry block in `AGENTS.md` / `CLAUDE.md`",
     `- Human-readable index: \`${TREE_SOURCE_REPOS_FILE}\` when present`,
     `- Current entrypoint: \`${currentEntrypoint ?? entrypointLabel}\``,
     "",
-    "## Bound Source/Workspace Repos",
+    "## Managed Code Repos",
     "",
-    ...buildSourceRepoIndexTable(bindings),
+    ...buildSourceRepoIndexTable(repos),
   ];
 
   return lines.join("\n");
