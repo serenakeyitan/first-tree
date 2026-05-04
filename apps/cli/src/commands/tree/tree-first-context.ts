@@ -1,12 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import {
-  TREE_SOURCE_REPOS_FILE,
-  listTreeBindings,
-  readSourceState,
-  readTreeState,
-} from "./binding-state.js";
+import { TREE_SOURCE_REPOS_FILE, listTreeBindings, readTreeState } from "./binding-state.js";
+import { readSourceBindingContract } from "./binding-contract.js";
 import { buildSourceRepoIndexTable } from "./source-repo-index.js";
 
 const ROOT_NODE_FILE = "NODE.md";
@@ -61,24 +57,24 @@ function resolveTreeContextRoot(currentRoot: string): ResolvedTreeContextRoot | 
     };
   }
 
-  const sourceState = readSourceState(currentRoot);
-  if (sourceState === null) {
+  const sourceBinding = readSourceBindingContract(currentRoot);
+  if (sourceBinding === undefined || sourceBinding.treeRepoName === undefined) {
     return null;
   }
 
-  const siblingRoot = join(dirname(currentRoot), sourceState.tree.treeRepoName);
+  const siblingRoot = join(dirname(currentRoot), sourceBinding.treeRepoName);
   if (readTreeState(siblingRoot) !== null) {
     return {
-      currentEntrypoint: sourceState.tree.entrypoint,
+      currentEntrypoint: sourceBinding.entrypoint,
       entrypointLabel: "bound source/workspace root",
       treeRoot: siblingRoot,
     };
   }
 
-  const tempRoot = join(currentRoot, ".first-tree", "tmp", sourceState.tree.treeRepoName);
+  const tempRoot = join(currentRoot, ".first-tree", "tmp", sourceBinding.treeRepoName);
   if (readTreeState(tempRoot) !== null) {
     return {
-      currentEntrypoint: sourceState.tree.entrypoint,
+      currentEntrypoint: sourceBinding.entrypoint,
       entrypointLabel: "bound source/workspace root",
       treeRoot: tempRoot,
     };

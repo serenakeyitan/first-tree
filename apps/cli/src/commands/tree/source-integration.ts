@@ -44,7 +44,6 @@ export type GitIgnoreUpdate = {
   file: ".gitignore";
 };
 
-const SOURCE_STATE_FILE = ".first-tree/source.json";
 const LOCAL_TREE_TEMP_ROOT = ".first-tree/tmp";
 
 const LOCAL_TREE_GITIGNORE_ENTRIES = [`${LOCAL_TREE_TEMP_ROOT}/`] as const;
@@ -77,7 +76,11 @@ export function buildSourceIntegrationBlock(
     "- Use the recorded tree repo name, tree repo URL, and GitHub slug from this block as the source of truth when deciding which tree to read or update.",
     "- If you already have that tree repo cloned locally, update it before you read anything else.",
     details.fallbackInstruction,
-    `- If \`${details.sourceStatePathValue}\` exists, treat it as legacy migration state only. Do not edit it by hand.`,
+    ...(details.sourceStatePathValue
+      ? [
+          `- If \`${details.sourceStatePathValue}\` exists, treat it as legacy migration state only. Do not edit it by hand.`,
+        ]
+      : []),
     `- Never commit anything under \`${LOCAL_TREE_TEMP_ROOT}/\` to this repo. It is local-only workspace state.`,
     "",
     "### After every task",
@@ -97,12 +100,12 @@ function deriveSourceIntegrationDetails(
   fallbackInstruction: string;
   metadataLines: string[];
   scopeText: string;
-  sourceStatePathValue: string;
+  sourceStatePathValue?: string;
 } {
   const bindingMode = options?.bindingMode ?? "standalone-source";
   const treeMode = options?.treeMode ?? "dedicated";
   const entrypoint = options?.entrypoint ?? "/";
-  const sourceStatePathValue = options?.sourceStatePath ?? SOURCE_STATE_FILE;
+  const sourceStatePathValue = options?.sourceStatePath;
   const resolvedTreeRepoName = options?.treeRepoName ?? treeRepoName;
   const treeRepoUrl = options?.treeRepoUrl?.trim() || null;
   const treeRepoSlug = parseGitHubRepoReference(treeRepoUrl ?? undefined) ?? null;
@@ -161,7 +164,7 @@ function buildMetadataLines(
   entrypoint: string,
   workspaceId: string | null,
   treeRepoUrl: string | null,
-  sourceStatePathValue: string,
+  sourceStatePathValue: string | undefined,
 ): string[] {
   return [
     `${BINDING_CONTRACT_MARKER} managed-block-v1`,
@@ -173,7 +176,7 @@ function buildMetadataLines(
     `${TREE_REPO_URL_MARKER} ${treeRepoUrl === null ? "pending publish" : `\`${treeRepoUrl}\``}`,
     `${ENTRYPOINT_MARKER} \`${entrypoint}\``,
     ...(workspaceId === null ? [] : [`${WORKSPACE_ID_MARKER} \`${workspaceId}\``]),
-    `${SOURCE_STATE_MARKER} \`${sourceStatePathValue}\``,
+    ...(sourceStatePathValue ? [`${SOURCE_STATE_MARKER} \`${sourceStatePathValue}\``] : []),
   ];
 }
 
@@ -272,11 +275,7 @@ function deriveIntegrationOptions(
   return {
     bindingMode: firstDefined(options?.bindingMode, existing?.bindingMode),
     entrypoint: firstDefined(options?.entrypoint, existing?.entrypoint),
-    sourceStatePath: firstDefined(
-      options?.sourceStatePath,
-      existing?.sourceStatePath,
-      SOURCE_STATE_FILE,
-    ),
+    sourceStatePath: firstDefined(options?.sourceStatePath),
     treeMode: firstDefined(options?.treeMode, existing?.treeMode),
     treeRepoName: firstDefined(options?.treeRepoName, existing?.treeRepoName, treeRepoName),
     treeRepoUrl: firstDefined(options?.treeRepoUrl, existing?.treeRepoUrl),

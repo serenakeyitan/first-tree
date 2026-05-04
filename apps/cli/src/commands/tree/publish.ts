@@ -4,13 +4,13 @@ import type { Command } from "commander";
 
 import type { CommandContext, SubcommandModule } from "../types.js";
 import {
+  removeSourceState,
   TREE_SOURCE_REPOS_FILE,
   listTreeBindings,
-  readSourceState,
   readTreeState,
-  writeSourceState,
   writeTreeState,
 } from "./binding-state.js";
+import { readSourceBindingContract } from "./binding-contract.js";
 import { syncTreeSourceRepoIndex } from "./source-repo-index.js";
 import { upsertSourceIntegrationFiles } from "./source-integration.js";
 import {
@@ -188,27 +188,20 @@ function refreshBoundSourceRoots(
   const refreshed: string[] = [];
 
   for (const sourceRoot of sourceRoots) {
-    const sourceState = readSourceState(sourceRoot);
-    if (sourceState === null) {
+    const sourceBinding = readSourceBindingContract(sourceRoot);
+    if (sourceBinding === undefined || sourceBinding.treeRepoName === undefined) {
       continue;
     }
 
-    writeSourceState(sourceRoot, {
-      ...sourceState,
-      tree: {
-        ...sourceState.tree,
-        remoteUrl: publishedTreeUrl,
-      },
-    });
-    upsertSourceIntegrationFiles(sourceRoot, sourceState.tree.treeRepoName, {
-      bindingMode: sourceState.bindingMode,
-      entrypoint: sourceState.tree.entrypoint,
-      sourceStatePath: ".first-tree/source.json",
-      treeMode: sourceState.tree.treeMode,
-      treeRepoName: sourceState.tree.treeRepoName,
+    upsertSourceIntegrationFiles(sourceRoot, sourceBinding.treeRepoName, {
+      bindingMode: sourceBinding.bindingMode,
+      entrypoint: sourceBinding.entrypoint,
+      treeMode: sourceBinding.treeMode,
+      treeRepoName: sourceBinding.treeRepoName,
       treeRepoUrl: publishedTreeUrl,
-      workspaceId: sourceState.workspaceId,
+      workspaceId: sourceBinding.workspaceId,
     });
+    removeSourceState(sourceRoot);
     refreshed.push(sourceRoot);
   }
 

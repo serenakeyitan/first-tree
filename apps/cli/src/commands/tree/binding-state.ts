@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readdirSync } from "node:fs";
+import { readdirSync, rmSync } from "node:fs";
 import { basename, join, relative } from "node:path";
 
 import {
@@ -217,6 +217,10 @@ export function writeSourceState(root: string, state: Omit<SourceState, "schemaV
     ...state,
     schemaVersion: SCHEMA_VERSION,
   });
+}
+
+export function removeSourceState(root: string): void {
+  rmSync(sourceStatePath(root), { force: true });
 }
 
 export function readTreeState(root: string): TreeState | null {

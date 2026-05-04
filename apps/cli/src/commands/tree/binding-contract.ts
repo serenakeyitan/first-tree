@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
-import type { SourceBindingMode, TreeMode } from "./binding-state.js";
+import { readSourceState, type SourceBindingMode, type TreeMode } from "./binding-state.js";
 import { parseGitHubRemoteUrl } from "./shared.js";
 
 export type SourceIntegrationFile = "AGENTS.md" | "CLAUDE.md";
@@ -204,4 +204,33 @@ export function findUpwardsManagedSourceBinding(
 
     currentDir = parentDir;
   }
+}
+
+export function readSourceBindingContract(root: string): ParsedSourceBindingContract | undefined {
+  const managedBinding = readManagedSourceBinding(root);
+
+  if (managedBinding !== undefined) {
+    return managedBinding;
+  }
+
+  const sourceState = readSourceState(root);
+
+  if (sourceState === null) {
+    return undefined;
+  }
+
+  const treeRepoSlug = parseGitHubRepoReference(sourceState.tree.remoteUrl);
+
+  return {
+    bindingContract: "legacy-source-state",
+    bindingMode: sourceState.bindingMode,
+    entrypoint: sourceState.tree.entrypoint,
+    scope: sourceState.scope,
+    sourceStatePath: ".first-tree/source.json",
+    treeMode: sourceState.tree.treeMode,
+    treeRepoName: sourceState.tree.treeRepoName,
+    ...(treeRepoSlug ? { treeRepoSlug } : {}),
+    ...(sourceState.tree.remoteUrl ? { treeRepoUrl: sourceState.tree.remoteUrl } : {}),
+    ...(sourceState.workspaceId ? { workspaceId: sourceState.workspaceId } : {}),
+  };
 }

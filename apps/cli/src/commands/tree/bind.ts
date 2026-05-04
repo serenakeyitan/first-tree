@@ -7,17 +7,14 @@ import type { CommandContext, SubcommandModule } from "../types.js";
 import {
   BoundTreeReference,
   RootKind,
+  removeSourceState,
   SourceBindingMode,
   TreeMode,
   buildStableSourceId,
   buildTreeId,
   deriveDefaultEntrypoint,
   determineScope,
-  readSourceState,
   readTreeState,
-  relativePathWithin,
-  upsertWorkspaceMember,
-  writeSourceState,
   writeTreeBinding,
   writeTreeState,
 } from "./binding-state.js";
@@ -53,7 +50,6 @@ type BindSummary = {
   bindingMode: SourceBindingMode;
   rootKind: RootKind;
   sourceRoot: string;
-  sourceStatePath: string;
   treeBindingPath: string;
   treeMode: TreeMode;
   treeRoot: string;
@@ -71,7 +67,6 @@ type BindingContext = {
   treeMode: TreeMode;
   treeReference: BoundTreeReference;
   workspaceId?: string;
-  workspaceRootPath?: string;
 };
 
 export const BIND_USAGE = `usage: first-tree tree bind [--tree-path PATH | --tree-url URL] [--tree-mode dedicated|shared] [--mode source|standalone-source|shared-source|workspace-root|workspace-member] [--workspace-id ID] [--workspace-root PATH] [--entrypoint PATH]
@@ -176,19 +171,6 @@ function resolveWorkspaceId(
   return explicit?.trim() || repoNameForRoot(sourceRoot);
 }
 
-function resolveWorkspaceRootPath(
-  cwd: string,
-  sourceRoot: string,
-  bindingMode: SourceBindingMode,
-  explicit?: string,
-): string | undefined {
-  if (bindingMode !== "workspace-member") {
-    return undefined;
-  }
-
-  return explicit ? resolve(cwd, explicit) : dirname(sourceRoot);
-}
-
 function ensureTreeCheckout(
   cwd: string,
   sourceRoot: string,
@@ -241,7 +223,7 @@ export function bindSourceRoot(
   commandCwd = process.cwd(),
 ): BindSummary {
   const treeResolution = ensureTreeCheckout(commandCwd, sourceRoot, options);
-  const binding = deriveBindingContext(sourceRoot, treeResolution, options, commandCwd);
+  const binding = deriveBindingContext(sourceRoot, treeResolution, options);
 
   copyCanonicalSkills(sourceRoot);
   copyCanonicalSkills(treeResolution.treeRoot);
@@ -254,20 +236,7 @@ export function bindSourceRoot(
     treeRepoUrl: treeResolution.treeUrl,
     workspaceId: binding.workspaceId,
   });
-
-  const existingSourceState = readSourceState(sourceRoot);
-  writeSourceState(sourceRoot, {
-    bindingMode: binding.bindingMode,
-    ...(binding.bindingMode === "workspace-root"
-      ? { members: existingSourceState?.members ?? [] }
-      : {}),
-    rootKind: binding.rootKind,
-    scope: determineScope(binding.bindingMode),
-    sourceId: binding.sourceId,
-    sourceName: binding.sourceRepoName,
-    tree: binding.treeReference,
-    ...(binding.workspaceId ? { workspaceId: binding.workspaceId } : {}),
-  });
+  removeSourceState(sourceRoot);
 
   writeBoundTreeState(
     treeResolution.treeRoot,
@@ -292,28 +261,10 @@ export function bindSourceRoot(
 
   syncTreeSourceRepoIndex(treeResolution.treeRoot);
 
-  if (
-    binding.bindingMode === "workspace-member" &&
-    binding.workspaceId &&
-    binding.workspaceRootPath
-  ) {
-    const memberRelativePath = relativePathWithin(binding.workspaceRootPath, sourceRoot);
-    upsertWorkspaceMember(binding.workspaceRootPath, binding.workspaceId, binding.treeReference, {
-      bindingMode: "workspace-member",
-      entrypoint: binding.entrypoint,
-      ...(memberRelativePath ? { relativePath: memberRelativePath } : {}),
-      ...(binding.sourceRemoteUrl ? { remoteUrl: binding.sourceRemoteUrl } : {}),
-      rootKind: binding.rootKind,
-      sourceId: binding.sourceId,
-      sourceName: binding.sourceRepoName,
-    });
-  }
-
   return {
     bindingMode: binding.bindingMode,
     rootKind: binding.rootKind,
     sourceRoot,
-    sourceStatePath: join(sourceRoot, ".first-tree", "source.json"),
     treeBindingPath: join(
       treeResolution.treeRoot,
       ".first-tree",
@@ -331,7 +282,6 @@ function deriveBindingContext(
   sourceRoot: string,
   treeResolution: { treeRepoName: string; treeRoot: string; treeUrl?: string },
   options: BindOptions,
-  commandCwd: string,
 ): BindingContext {
   const sourceRepoName = repoNameForRoot(sourceRoot);
   const treeMode = inferTreeMode(sourceRepoName, treeResolution.treeRepoName, options.treeMode);
@@ -361,16 +311,6 @@ function deriveBindingContext(
       treeRepoName: treeResolution.treeRepoName,
     },
     ...(workspaceId ? { workspaceId } : {}),
-    ...(bindingMode === "workspace-member"
-      ? {
-          workspaceRootPath: resolveWorkspaceRootPath(
-            commandCwd,
-            sourceRoot,
-            bindingMode,
-            options.workspaceRoot,
-          ),
-        }
-      : {}),
   };
 }
 
@@ -413,7 +353,7 @@ function runBindCommand(context: CommandContext): void {
       console.log(`  Workspace id:          ${summary.workspaceId}`);
     }
     console.log("");
-    console.log(`  Wrote ${summary.sourceStatePath}.`);
+    console.log("  Updated AGENTS.md / CLAUDE.md managed binding blocks.");
     console.log(`  Wrote ${summary.treeStatePath}.`);
     console.log(`  Wrote ${summary.treeBindingPath}.`);
   } catch (error) {

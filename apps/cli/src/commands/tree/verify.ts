@@ -4,12 +4,8 @@ import { join, resolve } from "node:path";
 import type { Command } from "commander";
 
 import type { CommandContext, SubcommandModule } from "../types.js";
-import {
-  TREE_PROGRESS_FILE,
-  TREE_STATE_FILE,
-  TREE_VERSION_FILE,
-  readSourceState,
-} from "./binding-state.js";
+import { TREE_PROGRESS_FILE, TREE_STATE_FILE, TREE_VERSION_FILE } from "./binding-state.js";
+import { readSourceBindingContract } from "./binding-contract.js";
 import { resolveRepoRoot } from "./shared.js";
 import { runValidateMembers } from "./validate-members.js";
 import { runValidateNodes } from "./validate-nodes.js";
@@ -80,15 +76,15 @@ function readUncheckedProgressItems(root: string): string[] {
 }
 
 function formatSourceRepoError(targetRoot: string): string {
-  const sourceState = readSourceState(targetRoot);
-  const treeRepoName = sourceState?.tree.treeRepoName;
+  const sourceBinding = readSourceBindingContract(targetRoot);
+  const treeRepoName = sourceBinding?.treeRepoName;
   const examplePath = treeRepoName ? `../${treeRepoName}` : "../<tree-repo>";
   return `This repo only has source/workspace integration installed. Verify the tree repo instead, for example \`first-tree tree verify --tree-path ${examplePath}\`.`;
 }
 
 function verifyTreeRoot(targetRoot: string): VerifySummary {
   if (
-    existsSync(join(targetRoot, ".first-tree", "source.json")) &&
+    readSourceBindingContract(targetRoot) !== undefined &&
     !existsSync(join(targetRoot, TREE_STATE_FILE))
   ) {
     throw new Error(formatSourceRepoError(targetRoot));

@@ -4,9 +4,10 @@ import { dirname, join, resolve } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { writeSourceState, writeTreeState } from "../src/commands/tree/binding-state.js";
+import { writeTreeState } from "../src/commands/tree/binding-state.js";
 import { initializeSourceRoot } from "../src/commands/tree/init.js";
 import { publishTreeRoot } from "../src/commands/tree/publish.js";
+import { buildSourceIntegrationBlock } from "../src/commands/tree/source-integration.js";
 
 const tempDirs: string[] = [];
 
@@ -41,19 +42,15 @@ describe("publishTreeRoot", () => {
       treeMode: "shared",
       treeRepoName: "context-tree",
     });
-    writeSourceState(sourceRoot, {
-      bindingMode: "shared-source",
-      rootKind: "git-repo",
-      scope: "repo",
-      sourceId: "product-repo",
-      sourceName: "product-repo",
-      tree: {
+    writeFileSync(
+      join(sourceRoot, "AGENTS.md"),
+      `${buildSourceIntegrationBlock("context-tree", {
+        bindingMode: "shared-source",
         entrypoint: "/repos/product-repo",
-        treeId: "context-tree",
         treeMode: "shared",
         treeRepoName: "context-tree",
-      },
-    });
+      })}\n`,
+    );
 
     const commandRunner = vi.fn((command: string, args: string[]) => {
       if (command === "git" && args[0] === "remote" && args[1] === "get-url") {
@@ -78,6 +75,9 @@ describe("publishTreeRoot", () => {
 
     expect(summary.publishedTreeUrl).toBe("https://github.com/acme/context-tree.git");
     expect(summary.refreshedSourceRoots).toEqual([sourceRoot]);
+    expect(readFileSync(join(sourceRoot, "AGENTS.md"), "utf8")).toContain(
+      "https://github.com/acme/context-tree.git",
+    );
     expect(commandRunner).toHaveBeenCalledWith(
       "gh",
       ["repo", "view", "acme/context-tree"],

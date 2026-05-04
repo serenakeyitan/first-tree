@@ -172,9 +172,9 @@ describe("first-tree CLI", () => {
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain("Context Tree Bind");
     expect(result.stdout).toContain("Wrote");
-    expect(await readFile(resolve(sourceRoot, ".first-tree", "source.json"), "utf8")).toContain(
-      '"treeRepoName"',
-    );
+    await expect(
+      readFile(resolve(sourceRoot, ".first-tree", "source.json"), "utf8"),
+    ).rejects.toThrow();
     expect(await readFile(resolve(sourceRoot, "AGENTS.md"), "utf8")).toContain("managed-block-v1");
     expect(await readFile(resolve(treeRoot, ".first-tree", "tree.json"), "utf8")).toContain(
       '"treeRepoName"',
@@ -233,19 +233,18 @@ describe("first-tree CLI", () => {
     expect(initResult.code).toBe(0);
     expect(initResult.stderr).toBe("");
 
-    const sourceJson = JSON.parse(
-      await readFile(resolve(workspaceRoot, ".first-tree", "source.json"), "utf8"),
+    await expect(
+      readFile(resolve(workspaceRoot, ".first-tree", "source.json"), "utf8"),
+    ).rejects.toThrow();
+    expect(await readFile(resolve(workspaceRoot, "AGENTS.md"), "utf8")).toContain(
+      "FIRST-TREE-ENTRYPOINT: `/workspaces/ws-entrypoint-test`",
     );
-    expect(sourceJson.bindingMode).toBe("workspace-root");
-    // The workspace root must keep its own `/workspaces/<id>` entrypoint even
-    // after `repo-a` and `repo-b` are bound as members. A regression here means
-    // the root binding has been silently overwritten with the last member's
-    // address (e.g. `/workspaces/<id>/repos/repo-b`).
-    expect(sourceJson.tree.entrypoint).toBe("/workspaces/ws-entrypoint-test");
-    expect(sourceJson.members.map((m) => m.entrypoint).sort()).toEqual([
-      "/workspaces/ws-entrypoint-test/repos/repo-a",
-      "/workspaces/ws-entrypoint-test/repos/repo-b",
-    ]);
+    expect(await readFile(resolve(repoA, "AGENTS.md"), "utf8")).toContain(
+      "FIRST-TREE-ENTRYPOINT: `/workspaces/ws-entrypoint-test/repos/repo-a`",
+    );
+    expect(await readFile(resolve(repoB, "AGENTS.md"), "utf8")).toContain(
+      "FIRST-TREE-ENTRYPOINT: `/workspaces/ws-entrypoint-test/repos/repo-b`",
+    );
   });
 
   it("verifies a freshly initialized tree (init -> verify happy path)", async () => {

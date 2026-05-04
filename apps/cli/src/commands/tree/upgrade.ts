@@ -6,11 +6,12 @@ import type { Command } from "commander";
 import type { CommandContext, SubcommandModule } from "../types.js";
 import { ensureAgentContextHooks, formatAgentContextHookMessages } from "./agent-context-hooks.js";
 import {
+  removeSourceState,
   TREE_VERSION_FILE,
-  readSourceState,
   readTreeState,
   writeTreeState,
 } from "./binding-state.js";
+import { readSourceBindingContract } from "./binding-contract.js";
 import { readBundledSkillVersion, copyCanonicalSkills } from "./skill-lib.js";
 import { syncTreeSourceRepoIndex } from "./source-repo-index.js";
 import {
@@ -43,23 +44,25 @@ function resolveTargetRoot(command: Command): string {
 }
 
 function upgradeSourceRoot(targetRoot: string, bundledSkillVersion: string): UpgradeSummary {
-  const sourceState = readSourceState(targetRoot);
-  if (sourceState === null) {
-    throw new Error("No `.first-tree/source.json` was found for this source/workspace root.");
+  const sourceBinding = readSourceBindingContract(targetRoot);
+  if (sourceBinding === undefined || sourceBinding.treeRepoName === undefined) {
+    throw new Error(
+      "No First Tree source/workspace binding was found in `AGENTS.md` or `CLAUDE.md`.",
+    );
   }
 
   copyCanonicalSkills(targetRoot);
   ensureWhitepaperSymlink(targetRoot);
   upsertLocalTreeGitIgnore(targetRoot);
-  upsertSourceIntegrationFiles(targetRoot, sourceState.tree.treeRepoName, {
-    bindingMode: sourceState.bindingMode,
-    entrypoint: sourceState.tree.entrypoint,
-    sourceStatePath: ".first-tree/source.json",
-    treeMode: sourceState.tree.treeMode,
-    treeRepoName: sourceState.tree.treeRepoName,
-    treeRepoUrl: sourceState.tree.remoteUrl,
-    workspaceId: sourceState.workspaceId,
+  upsertSourceIntegrationFiles(targetRoot, sourceBinding.treeRepoName, {
+    bindingMode: sourceBinding.bindingMode,
+    entrypoint: sourceBinding.entrypoint,
+    treeMode: sourceBinding.treeMode,
+    treeRepoName: sourceBinding.treeRepoName,
+    treeRepoUrl: sourceBinding.treeRepoUrl,
+    workspaceId: sourceBinding.workspaceId,
   });
+  removeSourceState(targetRoot);
   ensureAgentContextHooks(targetRoot);
 
   return {
@@ -98,8 +101,8 @@ export function upgradeTargetRoot(targetRoot: string): UpgradeSummary {
     return upgradeTreeRoot(targetRoot, bundledSkillVersion);
   }
 
-  const sourceState = readSourceState(targetRoot);
-  if (sourceState !== null) {
+  const sourceBinding = readSourceBindingContract(targetRoot);
+  if (sourceBinding !== undefined) {
     return upgradeSourceRoot(targetRoot, bundledSkillVersion);
   }
 
