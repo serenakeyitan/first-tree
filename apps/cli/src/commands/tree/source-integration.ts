@@ -46,7 +46,11 @@ export type GitIgnoreUpdate = {
 
 const LOCAL_TREE_TEMP_ROOT = ".first-tree/tmp";
 
-const LOCAL_TREE_GITIGNORE_ENTRIES = [`${LOCAL_TREE_TEMP_ROOT}/`] as const;
+const LOCAL_TREE_GITIGNORE_ENTRIES = [
+  `${LOCAL_TREE_TEMP_ROOT}/`,
+  ".agents/skills/",
+  ".claude/skills/",
+] as const;
 
 export function buildSourceIntegrationBlock(
   treeRepoName: string,

@@ -6,11 +6,12 @@ import type { CommandContext, SubcommandModule } from "../types.js";
 import { bindSourceRoot } from "./bind.js";
 import { bootstrapTreeRoot } from "./bootstrap.js";
 import { inspectCurrentWorkingTree } from "./inspect.js";
-import { repoNameForRoot } from "./shared.js";
+import { discoverWorkspaceRepos, repoNameForRoot } from "./shared.js";
 import { readTreeIdentityContract } from "./tree-identity.js";
 import { syncWorkspaceMembersFromRoot } from "./workspace-sync.js";
 
 type InitOptions = {
+  recursive?: boolean;
   scope?: "repo" | "workspace";
   treeMode?: "dedicated" | "shared";
   treeName?: string;
@@ -19,15 +20,23 @@ type InitOptions = {
   workspaceId?: string;
 };
 
+type CascadedRepo = {
+  bindingMode: string;
+  relativePath: string;
+  root: string;
+};
+
 type InitSummary = {
   bindingMode: string;
+  cascadedRepos?: CascadedRepo[];
+  recursive: boolean;
   sourceRoot: string;
   treeRoot: string;
   treeMode: "dedicated" | "shared";
   workspaceId?: string;
 };
 
-export const INIT_USAGE = `usage: first-tree tree init [--tree-path PATH | --tree-url URL] [--tree-name NAME] [--tree-mode dedicated|shared] [--scope repo|workspace] [--workspace-id ID]
+export const INIT_USAGE = `usage: first-tree tree init [--tree-path PATH | --tree-url URL] [--tree-name NAME] [--tree-mode dedicated|shared] [--scope repo|workspace] [--workspace-id ID] [--no-recursive]
 
 Onboard a repo or workspace to a Context Tree.
 
@@ -38,6 +47,8 @@ Options:
   --tree-mode MODE    dedicated or shared
   --scope MODE        repo or workspace
   --workspace-id ID   workspace identifier for shared workspace onboarding
+  --recursive         cascade onboarding into nested git repos (default)
+  --no-recursive      onboard only the current root; skip nested git repos
   --help              show this help message`;
 
 function configureInitCommand(command: Command): void {
@@ -47,18 +58,21 @@ function configureInitCommand(command: Command): void {
     .option("--tree-name <name>", "override the default sibling tree repo name")
     .option("--tree-mode <mode>", "dedicated or shared")
     .option("--scope <scope>", "repo or workspace")
-    .option("--workspace-id <id>", "workspace identifier for shared workspace onboarding");
+    .option("--workspace-id <id>", "workspace identifier for shared workspace onboarding")
+    .option("--recursive", "cascade onboarding into nested git repos (default)")
+    .option("--no-recursive", "onboard only the current root; skip nested git repos");
 }
 
 function readInitOptions(command: Command): InitOptions {
-  const options = command.opts() as Record<string, string | undefined>;
+  const options = command.opts() as Record<string, string | boolean | undefined>;
   return {
+    recursive: typeof options.recursive === "boolean" ? options.recursive : undefined,
     scope: options.scope as "repo" | "workspace" | undefined,
     treeMode: options.treeMode as "dedicated" | "shared" | undefined,
-    treeName: options.treeName,
-    treePath: options.treePath,
-    treeUrl: options.treeUrl,
-    workspaceId: options.workspaceId,
+    treeName: typeof options.treeName === "string" ? options.treeName : undefined,
+    treePath: typeof options.treePath === "string" ? options.treePath : undefined,
+    treeUrl: typeof options.treeUrl === "string" ? options.treeUrl : undefined,
+    workspaceId: typeof options.workspaceId === "string" ? options.workspaceId : undefined,
   };
 }
 
@@ -106,6 +120,7 @@ export function initializeSourceRoot(
   const scope = resolveScope(options, role);
   const treeMode = resolveTreeMode(options, scope);
   const treeRoot = resolveTreeRoot(sourceRoot, options, treeMode);
+  const recursive = options.recursive ?? true;
 
   if (treeRoot !== undefined && readTreeIdentityContract(treeRoot) === undefined) {
     bootstrapTreeRoot(treeRoot, {
@@ -125,25 +140,81 @@ export function initializeSourceRoot(
     process.cwd(),
   );
 
-  if (scope === "workspace" && treeRoot) {
-    if (
-      syncWorkspaceMembersFromRoot({
-        treePath: treeRoot,
-        workspaceId: options.workspaceId,
-        workspaceRoot: sourceRoot,
-      })
-    ) {
-      process.exitCode = 1;
+  const resolvedTreeRoot = treeRoot ?? bindingSummary.treeRoot;
+  const cascadedRepos: CascadedRepo[] = [];
+
+  if (recursive && resolvedTreeRoot) {
+    if (scope === "workspace") {
+      if (
+        syncWorkspaceMembersFromRoot({
+          treePath: resolvedTreeRoot,
+          workspaceId: options.workspaceId,
+          workspaceRoot: sourceRoot,
+        })
+      ) {
+        process.exitCode = 1;
+      }
+    } else {
+      cascadedRepos.push(
+        ...cascadeRepoScopeOnboarding(sourceRoot, resolvedTreeRoot, options.treeUrl),
+      );
     }
   }
 
   return {
     bindingMode: bindingSummary.bindingMode,
+    ...(cascadedRepos.length > 0 ? { cascadedRepos } : {}),
+    recursive,
     sourceRoot,
-    treeRoot: treeRoot ?? bindingSummary.treeRoot,
+    treeRoot: resolvedTreeRoot,
     treeMode,
     ...(bindingSummary.workspaceId ? { workspaceId: bindingSummary.workspaceId } : {}),
   };
+}
+
+function cascadeRepoScopeOnboarding(
+  sourceRoot: string,
+  treeRoot: string,
+  treeUrl: string | undefined,
+): CascadedRepo[] {
+  const resolvedTreeRoot = resolve(treeRoot);
+  const resolvedSourceRoot = resolve(sourceRoot);
+  const candidates = discoverWorkspaceRepos(sourceRoot).filter(
+    (candidate) =>
+      resolve(candidate.root) !== resolvedTreeRoot &&
+      resolve(candidate.root) !== resolvedSourceRoot,
+  );
+
+  const cascaded: CascadedRepo[] = [];
+
+  for (const candidate of candidates) {
+    try {
+      const summary = bindSourceRoot(
+        candidate.root,
+        {
+          mode: "source",
+          treeMode: "shared",
+          treePath: treeRoot,
+          ...(treeUrl ? { treeUrl } : {}),
+        },
+        sourceRoot,
+      );
+      cascaded.push({
+        bindingMode: summary.bindingMode,
+        relativePath: candidate.relativePath,
+        root: candidate.root,
+      });
+    } catch (error) {
+      process.exitCode = 1;
+      console.error(
+        `  Failed to onboard nested repo ${candidate.relativePath}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  return cascaded;
 }
 
 function runInitCommand(context: CommandContext): void {
@@ -164,6 +235,13 @@ function runInitCommand(context: CommandContext): void {
     console.log(`  Tree mode:             ${summary.treeMode}`);
     if (summary.workspaceId) {
       console.log(`  Workspace id:          ${summary.workspaceId}`);
+    }
+    console.log(`  Recursive cascade:     ${summary.recursive ? "yes" : "no"}`);
+    if (summary.cascadedRepos && summary.cascadedRepos.length > 0) {
+      console.log(`  Cascaded nested repos:`);
+      for (const repo of summary.cascadedRepos) {
+        console.log(`    - ${repo.relativePath} (${repo.bindingMode})`);
+      }
     }
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
