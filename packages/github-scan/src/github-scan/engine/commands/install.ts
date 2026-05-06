@@ -174,37 +174,8 @@ export async function runInstall(
   }
   write("");
 
-  // Self-healing: if a daemon is already running for this dir, stop it first
-  // so `start` can re-bootstrap with the user's new args. This makes install
-  // idempotent — users can re-run it any time without "already running" errors.
-  const isRunning = checkDaemonRunning(githubScanDir);
-  if (isRunning) {
-    write("Detected a running daemon — restarting it with the new configuration...");
-    const stopResult = spawn(startCommand.cmd, [...startCommand.args.slice(0, -1), "stop"], {
-      stdio: "ignore",
-    });
-    if (stopResult.status !== 0) {
-      write("  WARN: existing daemon failed to stop cleanly; continuing anyway");
-    }
-  } else {
-    write("Starting the github-scan daemon...");
-  }
-
-  // Strip tray-only flags before forwarding to `start` (which doesn't know them).
-  const startArgs = args.filter(
-    (a) => a !== "--tray" && a !== "--no-tray" && a !== "--tray=yes" && a !== "--tray=no" && a !== "--keep-quarantine",
-  );
-  const result = spawn(startCommand.cmd, [...startCommand.args, ...startArgs], {
-    stdio: "inherit",
-  });
-  if (result.status === 0) {
-    write(isRunning ? "  Daemon restarted" : "  Daemon started");
-  } else {
-    write(
-      "  WARN: daemon start failed; rerun `first-tree github scan start --allow-repo owner/repo` manually",
-    );
-  }
-  write("");
+  const isRunning = stopExistingDaemonIfRunning(githubScanDir, startCommand, spawn, write);
+  startDaemon(args, startCommand, spawn, write, isRunning);
 
   // macOS-only: offer to install the menu bar tray app, which mirrors the dashboard.
   if (platform() === "darwin") {
@@ -219,6 +190,60 @@ export async function runInstall(
   write("  Inspect:    first-tree github scan doctor");
 
   return 0;
+}
+
+/**
+ * Self-healing: if a daemon is already running for this dir, stop it so `start`
+ * can re-bootstrap with the user's new args. Returns whether a daemon was running.
+ */
+function stopExistingDaemonIfRunning(
+  githubScanDir: string,
+  startCommand: { cmd: string; args: string[] },
+  spawn: typeof spawnSync,
+  write: (text: string) => void,
+): boolean {
+  const isRunning = checkDaemonRunning(githubScanDir);
+  if (!isRunning) {
+    write("Starting the github-scan daemon...");
+    return false;
+  }
+  write("Detected a running daemon — restarting it with the new configuration...");
+  const stopResult = spawn(startCommand.cmd, [...startCommand.args.slice(0, -1), "stop"], {
+    stdio: "ignore",
+  });
+  if (stopResult.status !== 0) {
+    write("  WARN: existing daemon failed to stop cleanly; continuing anyway");
+  }
+  return true;
+}
+
+function startDaemon(
+  args: readonly string[],
+  startCommand: { cmd: string; args: string[] },
+  spawn: typeof spawnSync,
+  write: (text: string) => void,
+  wasRunning: boolean,
+): void {
+  // Strip tray-only flags before forwarding to `start` (which doesn't know them).
+  const startArgs = args.filter(
+    (a) =>
+      a !== "--tray" &&
+      a !== "--no-tray" &&
+      a !== "--tray=yes" &&
+      a !== "--tray=no" &&
+      a !== "--keep-quarantine",
+  );
+  const result = spawn(startCommand.cmd, [...startCommand.args, ...startArgs], {
+    stdio: "inherit",
+  });
+  if (result.status === 0) {
+    write(wasRunning ? "  Daemon restarted" : "  Daemon started");
+  } else {
+    write(
+      "  WARN: daemon start failed; rerun `first-tree github scan start --allow-repo owner/repo` manually",
+    );
+  }
+  write("");
 }
 
 /**
