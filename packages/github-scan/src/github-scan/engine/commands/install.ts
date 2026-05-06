@@ -174,7 +174,22 @@ export async function runInstall(
   }
   write("");
 
-  write("Starting the github-scan daemon...");
+  // Self-healing: if a daemon is already running for this dir, stop it first
+  // so `start` can re-bootstrap with the user's new args. This makes install
+  // idempotent — users can re-run it any time without "already running" errors.
+  const isRunning = checkDaemonRunning(githubScanDir);
+  if (isRunning) {
+    write("Detected a running daemon — restarting it with the new configuration...");
+    const stopResult = spawn(startCommand.cmd, [...startCommand.args.slice(0, -1), "stop"], {
+      stdio: "ignore",
+    });
+    if (stopResult.status !== 0) {
+      write("  WARN: existing daemon failed to stop cleanly; continuing anyway");
+    }
+  } else {
+    write("Starting the github-scan daemon...");
+  }
+
   // Strip tray-only flags before forwarding to `start` (which doesn't know them).
   const startArgs = args.filter(
     (a) => a !== "--tray" && a !== "--no-tray" && a !== "--tray=yes" && a !== "--tray=no" && a !== "--keep-quarantine",
@@ -183,7 +198,7 @@ export async function runInstall(
     stdio: "inherit",
   });
   if (result.status === 0) {
-    write("  Daemon started");
+    write(isRunning ? "  Daemon restarted" : "  Daemon started");
   } else {
     write(
       "  WARN: daemon start failed; rerun `first-tree github scan start --allow-repo owner/repo` manually",
@@ -333,6 +348,42 @@ function summarizeExistingConfig(configPath: string, write: (text: string) => vo
   if (summary.length > 0) {
     write(`    (${summary.join(", ")})`);
   }
+}
+
+/**
+ * Detect whether a daemon is currently running for the given GITHUB_SCAN_DIR.
+ * Reads the lock file the daemon writes when alive (under
+ * `runner/locks/<host>__<login>__<profile>/lock.env`) and checks that the pid
+ * actually exists. Returns false if the lock is stale (process gone) or
+ * missing entirely.
+ */
+function checkDaemonRunning(githubScanDir: string): boolean {
+  const fs = require("node:fs") as typeof import("node:fs");
+  let lockDirs: string[];
+  try {
+    lockDirs = fs.readdirSync(join(githubScanDir, "runner/locks"));
+  } catch {
+    return false;
+  }
+  for (const dir of lockDirs) {
+    let body: string;
+    try {
+      body = fs.readFileSync(join(githubScanDir, "runner/locks", dir, "lock.env"), "utf8");
+    } catch {
+      continue;
+    }
+    const pidMatch = /^pid=(\d+)/m.exec(body);
+    if (!pidMatch) continue;
+    const pid = Number.parseInt(pidMatch[1], 10);
+    try {
+      // Signal 0 throws if the process is gone.
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      // stale lock; check the next one
+    }
+  }
+  return false;
 }
 
 function defaultPrompt(question: string): Promise<string> {
