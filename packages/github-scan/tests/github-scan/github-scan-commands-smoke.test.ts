@@ -118,10 +118,10 @@ describe("runCleanup", () => {
 });
 
 describe("runInstall", () => {
-  it("refuses to install-start without an explicit repo scope", () => {
+  it("refuses to install-start without an explicit repo scope", async () => {
     const lines: string[] = [];
     const spawn = vi.fn(() => ({ status: 0 })) as unknown as typeof import("node:child_process").spawnSync;
-    const code = runInstall([], {
+    const code = await runInstall([], {
       githubScanDir: makeHome("install-missing-scope"),
       write: (line) => lines.push(line),
       checkCommand: () => true,
@@ -133,10 +133,10 @@ describe("runInstall", () => {
     expect(lines.join("\n")).toContain("missing required --allow-repo");
   });
 
-  it("re-invokes the current CLI for `github-scan start` instead of shelling to PATH", () => {
+  it("re-invokes the current CLI for `github-scan start` instead of shelling to PATH", async () => {
     const lines: string[] = [];
     const spawn = vi.fn(() => ({ status: 0 })) as unknown as typeof import("node:child_process").spawnSync;
-    const code = runInstall(["--allow-repo", "owner/repo"], {
+    const code = await runInstall(["--allow-repo", "owner/repo"], {
       githubScanDir: makeHome("install"),
       write: (line) => lines.push(line),
       checkCommand: () => true,
