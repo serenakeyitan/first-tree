@@ -352,8 +352,9 @@ final class DaemonController: ObservableObject {
         defer { isWorking = false }
         let process = Process()
         let pipe = Pipe()
-        process.executableURL = Self.firstTreeBinaryURL
-        process.arguments = args
+        let argv = Self.firstTreeInvocation(args: args)
+        process.executableURL = URL(fileURLWithPath: argv.executable)
+        process.arguments = argv.arguments
         if let cwd = cwd {
             process.currentDirectoryURL = URL(fileURLWithPath: cwd, isDirectory: true)
         }
@@ -377,20 +378,22 @@ final class DaemonController: ObservableObject {
         return output.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Resolved location of the `first-tree` binary. Tries common install paths.
-    private static let firstTreeBinaryURL: URL = {
+    /// Build a (executable, args) pair to invoke `first-tree`.
+    /// Tries common install paths first; if none are executable, falls back to
+    /// `/usr/bin/env first-tree …` which lets `env` resolve `first-tree` against
+    /// our `runtimePath`. This handles non-default install locations (e.g.,
+    /// pnpm/yarn global bins) without us hardcoding every possible path.
+    private static func firstTreeInvocation(args: [String]) -> (executable: String, arguments: [String]) {
         let candidates = [
             "\(FileManager.default.homeDirectoryForCurrentUser.path)/.local/bin/first-tree",
             "/usr/local/bin/first-tree",
             "/opt/homebrew/bin/first-tree",
         ]
         for path in candidates where FileManager.default.isExecutableFile(atPath: path) {
-            return URL(fileURLWithPath: path)
+            return (executable: path, arguments: args)
         }
-        // Final fallback: shell out to `which`. If even this fails, runCLI will
-        // surface a clear error rather than silently breaking.
-        return URL(fileURLWithPath: "/usr/bin/env")
-    }()
+        return (executable: "/usr/bin/env", arguments: ["first-tree"] + args)
+    }
 
     /// PATH to provide to first-tree so it can find `node`, `gh`, and other deps.
     /// Includes nvm path (Node), Homebrew, /usr/local/bin, system bins.
@@ -982,7 +985,12 @@ final class WindowManager {
         }
         let view = QuitConfirmView(
             onPauseInstead: { [weak self] in
-                inbox.markPaused(true)
+                // Actually stop the daemon — markPaused alone leaves the daemon
+                // running, which would (a) trigger the self-heal drift notification
+                // 30s later and (b) make a subsequent Resume fail with "already
+                // running". Reuses the same fire-and-forget path as the menu
+                // bar's Pause button.
+                daemon.startPauseInBackground(inbox: inbox)
                 self?.quitConfirmWindow?.close()
             },
             onCancel: { [weak self] in
