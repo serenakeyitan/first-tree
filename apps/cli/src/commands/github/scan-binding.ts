@@ -1,6 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
+import {
+  findUpwardsManagedSourceBinding,
+  parseGitHubRepoReference,
+} from "../tree/binding-contract.js";
+
 const TREE_REPO_FLAG = "--tree-repo";
 const TREE_REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 
@@ -22,7 +27,8 @@ type SourceStateBinding = {
 type BindingResolution =
   | {
       ok: true;
-      source: "flag" | "source-state";
+      source: "flag" | "managed-file" | "source-state";
+      managedBindingPath?: string;
       treeRepo?: string;
       treeRepoName?: string;
       sourceStatePath?: string;
@@ -43,26 +49,6 @@ function asString(value: unknown): string | undefined {
 function isHelpRequest(args: readonly string[]): boolean {
   const first = args[0];
   return first === "--help" || first === "-h" || first === "help";
-}
-
-function parseGitHubRepo(value: string | undefined): string | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (TREE_REPO_PATTERN.test(value)) {
-    return value;
-  }
-
-  const httpsMatch = /^https:\/\/github\.com\/([^/]+\/[^/]+?)(?:\.git)?$/u.exec(value);
-
-  if (httpsMatch?.[1] !== undefined) {
-    return httpsMatch[1];
-  }
-
-  const sshMatch = /^git@github\.com:([^/]+\/[^/]+?)(?:\.git)?$/u.exec(value);
-
-  return sshMatch?.[1];
 }
 
 function readJson(path: string): unknown | undefined {
@@ -101,7 +87,7 @@ function parseSourceStateBinding(sourceStatePath: string): SourceStateBinding | 
   }
 
   const tree = isRecord(parsed.tree) ? parsed.tree : undefined;
-  const treeRepo = parseGitHubRepo(
+  const treeRepo = parseGitHubRepoReference(
     asString(tree?.repo) ??
       asString(tree?.treeRepo) ??
       asString(parsed.treeRepo) ??
@@ -193,6 +179,18 @@ export function resolveGitHubScanBinding(args: readonly string[]): BindingResolu
     };
   }
 
+  const managedBinding = findUpwardsManagedSourceBinding(process.cwd());
+
+  if (managedBinding !== undefined) {
+    return {
+      ok: true,
+      managedBindingPath: managedBinding.path,
+      source: "managed-file",
+      ...(managedBinding.treeRepoSlug ? { treeRepo: managedBinding.treeRepoSlug } : {}),
+      ...(managedBinding.treeRepoName ? { treeRepoName: managedBinding.treeRepoName } : {}),
+    };
+  }
+
   const sourceStatePath = findUpwards(process.cwd(), ".first-tree/source.json");
 
   if (sourceStatePath !== undefined) {
@@ -214,7 +212,8 @@ export function resolveGitHubScanBinding(args: readonly string[]): BindingResolu
     error: [
       "first-tree github scan requires a bound tree repo before it can start scanning.",
       "Bind this repo first with `first-tree tree bind ...`, or retry with `--tree-repo <owner/repo>`.",
-      "Expected binding metadata in `.first-tree/source.json`.",
+      "Expected binding metadata in the managed First Tree integration block in `AGENTS.md` or `CLAUDE.md`.",
+      "Legacy `.first-tree/source.json` metadata is still accepted during migration.",
     ].join("\n"),
   };
 }

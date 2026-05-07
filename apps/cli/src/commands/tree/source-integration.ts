@@ -2,6 +2,23 @@ import { existsSync, lstatSync, readFileSync, readlinkSync, rmSync, writeFileSyn
 import { join } from "node:path";
 
 import { SourceBindingMode, TreeMode } from "./binding-state.js";
+import {
+  BINDING_CONTRACT_MARKER,
+  BINDING_MODE_MARKER,
+  ENTRYPOINT_MARKER,
+  parseGitHubRepoReference,
+  parseManagedSourceBindingText,
+  SOURCE_INTEGRATION_BEGIN,
+  SOURCE_INTEGRATION_END,
+  SOURCE_INTEGRATION_FILES,
+  SOURCE_INTEGRATION_MARKER,
+  SOURCE_STATE_MARKER,
+  TREE_MODE_MARKER,
+  TREE_REPO_MARKER,
+  TREE_REPO_SLUG_MARKER,
+  TREE_REPO_URL_MARKER,
+  WORKSPACE_ID_MARKER,
+} from "./binding-contract.js";
 import { ManagedFileAction, upsertWhitepaperFile } from "./skill-lib.js";
 import { ensureTrailingNewline } from "./shared.js";
 
@@ -27,24 +44,13 @@ export type GitIgnoreUpdate = {
   file: ".gitignore";
 };
 
-const SOURCE_STATE_FILE = ".first-tree/source.json";
 const LOCAL_TREE_TEMP_ROOT = ".first-tree/tmp";
-const SOURCE_INTEGRATION_BEGIN = "<!-- BEGIN FIRST-TREE-SOURCE-INTEGRATION -->";
-const SOURCE_INTEGRATION_END = "<!-- END FIRST-TREE-SOURCE-INTEGRATION -->";
-const SOURCE_INTEGRATION_MARKER = "FIRST-TREE-SOURCE-INTEGRATION:";
-const TREE_REPO_MARKER = "FIRST-TREE-TREE-REPO:";
-const TREE_MODE_MARKER = "FIRST-TREE-TREE-MODE:";
-const BINDING_MODE_MARKER = "FIRST-TREE-BINDING-MODE:";
-const TREE_REPO_URL_MARKER = "FIRST-TREE-TREE-REPO-URL:";
-const ENTRYPOINT_MARKER = "FIRST-TREE-ENTRYPOINT:";
-const WORKSPACE_ID_MARKER = "FIRST-TREE-WORKSPACE-ID:";
-const SOURCE_STATE_MARKER = "FIRST-TREE-SOURCE-STATE:";
-const SOURCE_INTEGRATION_FILES: readonly SourceIntegrationFile[] = [
-  "AGENTS.md",
-  "CLAUDE.md",
-] as const;
 
-const LOCAL_TREE_GITIGNORE_ENTRIES = [`${LOCAL_TREE_TEMP_ROOT}/`] as const;
+const LOCAL_TREE_GITIGNORE_ENTRIES = [
+  `${LOCAL_TREE_TEMP_ROOT}/`,
+  ".agents/skills/",
+  ".claude/skills/",
+] as const;
 
 export function buildSourceIntegrationBlock(
   treeRepoName: string,
@@ -70,9 +76,15 @@ export function buildSourceIntegrationBlock(
     "",
     "### Before every task",
     "",
-    `- Read \`${details.sourceStatePathValue}\` first. Use its recorded tree repo URL and tree repo name as the source of truth for which Context Tree this repo belongs to.`,
+    "- Treat this managed block as the canonical local binding contract for which Context Tree this repo belongs to.",
+    "- Use the recorded tree repo name, tree repo URL, and GitHub slug from this block as the source of truth when deciding which tree to read or update.",
     "- If you already have that tree repo cloned locally, update it before you read anything else.",
     details.fallbackInstruction,
+    ...(details.sourceStatePathValue
+      ? [
+          `- If \`${details.sourceStatePathValue}\` exists, treat it as legacy migration state only. Do not edit it by hand.`,
+        ]
+      : []),
     `- Never commit anything under \`${LOCAL_TREE_TEMP_ROOT}/\` to this repo. It is local-only workspace state.`,
     "",
     "### After every task",
@@ -92,29 +104,31 @@ function deriveSourceIntegrationDetails(
   fallbackInstruction: string;
   metadataLines: string[];
   scopeText: string;
-  sourceStatePathValue: string;
+  sourceStatePathValue?: string;
 } {
   const bindingMode = options?.bindingMode ?? "standalone-source";
   const treeMode = options?.treeMode ?? "dedicated";
   const entrypoint = options?.entrypoint ?? "/";
-  const sourceStatePathValue = options?.sourceStatePath ?? SOURCE_STATE_FILE;
+  const sourceStatePathValue = options?.sourceStatePath;
   const resolvedTreeRepoName = options?.treeRepoName ?? treeRepoName;
   const treeRepoUrl = options?.treeRepoUrl?.trim() || null;
+  const treeRepoSlug = parseGitHubRepoReference(treeRepoUrl ?? undefined) ?? null;
   const workspaceId = options?.workspaceId?.trim() || null;
 
   return {
     bindingLines: buildBindingLines(
       resolvedTreeRepoName,
+      treeRepoSlug,
       bindingMode,
       entrypoint,
       workspaceId,
       treeRepoUrl,
-      sourceStatePathValue,
     ),
     fallbackInstruction: buildFallbackInstruction(treeRepoName, treeRepoUrl),
     metadataLines: buildMetadataLines(
       treeRepoName,
       resolvedTreeRepoName,
+      treeRepoSlug,
       bindingMode,
       treeMode,
       entrypoint,
@@ -129,41 +143,44 @@ function deriveSourceIntegrationDetails(
 
 function buildBindingLines(
   resolvedTreeRepoName: string,
+  treeRepoSlug: string | null,
   bindingMode: SourceBindingMode,
   entrypoint: string,
   workspaceId: string | null,
   treeRepoUrl: string | null,
-  sourceStatePathValue: string,
 ): string[] {
   return [
     `- **Tree repo:** \`${resolvedTreeRepoName}\``,
+    ...(treeRepoSlug === null ? [] : [`- **GitHub tree repo:** \`${treeRepoSlug}\``]),
     `- **Binding mode:** \`${bindingMode}\``,
     `- **Entrypoint:** \`${entrypoint}\``,
     ...(workspaceId === null ? [] : [`- **Workspace ID:** \`${workspaceId}\``]),
     `- **Tree repo URL:** ${formatTreeRepoUrlDisplay(treeRepoUrl)}`,
-    `- **Source state:** \`${sourceStatePathValue}\``,
   ];
 }
 
 function buildMetadataLines(
   treeRepoName: string,
   resolvedTreeRepoName: string,
+  treeRepoSlug: string | null,
   bindingMode: SourceBindingMode,
   treeMode: TreeMode,
   entrypoint: string,
   workspaceId: string | null,
   treeRepoUrl: string | null,
-  sourceStatePathValue: string,
+  sourceStatePathValue: string | undefined,
 ): string[] {
   return [
+    `${BINDING_CONTRACT_MARKER} managed-block-v1`,
     `${SOURCE_INTEGRATION_MARKER} ${describeBinding(bindingMode, treeMode, treeRepoName)}`,
     `${TREE_REPO_MARKER} \`${resolvedTreeRepoName}\``,
+    ...(treeRepoSlug === null ? [] : [`${TREE_REPO_SLUG_MARKER} \`${treeRepoSlug}\``]),
     `${TREE_MODE_MARKER} \`${treeMode}\``,
     `${BINDING_MODE_MARKER} \`${bindingMode}\``,
     `${TREE_REPO_URL_MARKER} ${treeRepoUrl === null ? "pending publish" : `\`${treeRepoUrl}\``}`,
     `${ENTRYPOINT_MARKER} \`${entrypoint}\``,
     ...(workspaceId === null ? [] : [`${WORKSPACE_ID_MARKER} \`${workspaceId}\``]),
-    `${SOURCE_STATE_MARKER} \`${sourceStatePathValue}\``,
+    ...(sourceStatePathValue ? [`${SOURCE_STATE_MARKER} \`${sourceStatePathValue}\``] : []),
   ];
 }
 
@@ -257,22 +274,16 @@ function deriveIntegrationOptions(
   treeRepoName: string,
   options?: SourceIntegrationOptions,
 ): SourceIntegrationOptions {
+  const existing = parseManagedSourceBindingText(normalized);
+
   return {
-    bindingMode: firstDefined(options?.bindingMode, detectExistingBindingMode(normalized)),
-    entrypoint: firstDefined(options?.entrypoint, detectExistingEntrypoint(normalized)),
-    sourceStatePath: firstDefined(
-      options?.sourceStatePath,
-      detectExistingSourceStatePath(normalized),
-      SOURCE_STATE_FILE,
-    ),
-    treeMode: firstDefined(options?.treeMode, detectExistingTreeMode(normalized)),
-    treeRepoName: firstDefined(
-      options?.treeRepoName,
-      detectExistingTreeRepoName(normalized),
-      treeRepoName,
-    ),
-    treeRepoUrl: firstDefined(options?.treeRepoUrl, detectExistingTreeRepoUrl(normalized)),
-    workspaceId: firstDefined(options?.workspaceId, detectExistingWorkspaceId(normalized)),
+    bindingMode: firstDefined(options?.bindingMode, existing?.bindingMode),
+    entrypoint: firstDefined(options?.entrypoint, existing?.entrypoint),
+    sourceStatePath: firstDefined(options?.sourceStatePath),
+    treeMode: firstDefined(options?.treeMode, existing?.treeMode),
+    treeRepoName: firstDefined(options?.treeRepoName, existing?.treeRepoName, treeRepoName),
+    treeRepoUrl: firstDefined(options?.treeRepoUrl, existing?.treeRepoUrl),
+    workspaceId: firstDefined(options?.workspaceId, existing?.workspaceId),
   };
 }
 
@@ -299,53 +310,6 @@ function appendManagedBlock(current: string, nextBlock: string): string {
     return `${nextBlock}\n`;
   }
   return `${trimmed}\n\n${nextBlock}\n`;
-}
-
-function detectExistingTreeRepoUrl(text: string): string | null {
-  const match = text.match(/^FIRST-TREE-TREE-REPO-URL:\s+`(.+?)`\s*$/mu);
-  return match?.[1] ?? null;
-}
-
-function detectExistingTreeRepoName(text: string): string | null {
-  const explicit = text.match(/^FIRST-TREE-TREE-REPO:\s+`(.+?)`\s*$/mu);
-  if (explicit?.[1]) {
-    return explicit[1];
-  }
-  const legacy = text.match(/^FIRST-TREE-SOURCE-INTEGRATION:\s+.*?\b(?:repo|tree)\s+`(.+?)`\s*$/mu);
-  return legacy?.[1] ?? null;
-}
-
-function detectExistingTreeMode(text: string): TreeMode | null {
-  const match = text.match(/^FIRST-TREE-TREE-MODE:\s+`(.+?)`\s*$/mu);
-  return match?.[1] === "dedicated" || match?.[1] === "shared" ? match[1] : null;
-}
-
-function detectExistingBindingMode(text: string): SourceBindingMode | null {
-  const match = text.match(/^FIRST-TREE-BINDING-MODE:\s+`(.+?)`\s*$/mu);
-  switch (match?.[1]) {
-    case "standalone-source":
-    case "shared-source":
-    case "workspace-root":
-    case "workspace-member":
-      return match[1];
-    default:
-      return null;
-  }
-}
-
-function detectExistingEntrypoint(text: string): string | null {
-  const match = text.match(/^FIRST-TREE-ENTRYPOINT:\s+`(.+?)`\s*$/mu);
-  return match?.[1] ?? null;
-}
-
-function detectExistingWorkspaceId(text: string): string | null {
-  const match = text.match(/^FIRST-TREE-WORKSPACE-ID:\s+`(.+?)`\s*$/mu);
-  return match?.[1] ?? null;
-}
-
-function detectExistingSourceStatePath(text: string): string | null {
-  const match = text.match(/^FIRST-TREE-SOURCE-STATE:\s+`(.+?)`\s*$/mu);
-  return match?.[1] ?? null;
 }
 
 export function upsertLocalTreeGitIgnore(root: string): GitIgnoreUpdate {

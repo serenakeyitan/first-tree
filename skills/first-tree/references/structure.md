@@ -12,8 +12,10 @@ First Tree uses a Git repo as a durable, reviewable context layer.
 
 - `NODE.md` at each directory level describes the domain and points to child domains or leaves
 - leaf markdown files capture durable decisions, rationale, or constraints
-- `.first-tree/source.json` lives in source/workspace roots
-- `.first-tree/tree.json` and `.first-tree/bindings/` live in tree repos
+- source/workspace roots carry First Tree binding metadata in managed blocks
+  inside `AGENTS.md` / `CLAUDE.md`
+- tree repos carry tree identity and managed code-repo registry metadata in
+  managed blocks inside `AGENTS.md` / `CLAUDE.md`
 
 ## Ownership
 

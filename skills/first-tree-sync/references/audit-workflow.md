@@ -7,8 +7,8 @@ workflow uses `tree verify` plus manual reading.
 ## Inputs
 
 - one tree repo (the one bound to the current source/workspace)
-- one or more source repos (read from the tree's `.first-tree/bindings/`
-  and `source-repos.md`)
+- one or more source repos (read from the tree's managed code-repo registry
+  block in `AGENTS.md` / `CLAUDE.md`, or from `source-repos.md`)
 - optional `--since <ref>` to scope the audit to changes since a commit
 
 ## Phases
@@ -25,7 +25,7 @@ first-tree tree verify
 
 - missing `title`/`owners` frontmatter on a tree node
 - broken `soft_links` targets (this surfaces `cross-domain-broken` directly)
-- tree state file mismatches
+- missing or malformed tree identity metadata
 - members/ structure violations
 
 Convert each verify failure into a candidate drift:

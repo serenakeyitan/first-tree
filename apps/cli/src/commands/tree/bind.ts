@@ -7,21 +7,14 @@ import type { CommandContext, SubcommandModule } from "../types.js";
 import {
   BoundTreeReference,
   RootKind,
+  removeSourceState,
   SourceBindingMode,
   TreeMode,
-  buildStableSourceId,
   buildTreeId,
   deriveDefaultEntrypoint,
-  determineScope,
-  readSourceState,
-  readTreeState,
-  relativePathWithin,
-  upsertWorkspaceMember,
-  writeSourceState,
-  writeTreeBinding,
-  writeTreeState,
 } from "./binding-state.js";
 import { copyCanonicalSkills } from "./skill-lib.js";
+import { bootstrapTreeRoot } from "./bootstrap.js";
 import { syncTreeSourceRepoIndex } from "./source-repo-index.js";
 import {
   ensureWhitepaperSymlink,
@@ -36,6 +29,8 @@ import {
   resolveRepoRoot,
   runCommand,
 } from "./shared.js";
+import { readTreeIdentityContract, syncTreeIdentityFiles } from "./tree-identity.js";
+import { upsertTreeCodeRepoRegistry } from "./tree-repo-registry.js";
 
 type BindModeOption = SourceBindingMode | "source";
 
@@ -53,11 +48,8 @@ type BindSummary = {
   bindingMode: SourceBindingMode;
   rootKind: RootKind;
   sourceRoot: string;
-  sourceStatePath: string;
-  treeBindingPath: string;
   treeMode: TreeMode;
   treeRoot: string;
-  treeStatePath: string;
   workspaceId?: string;
 };
 
@@ -65,13 +57,11 @@ type BindingContext = {
   bindingMode: SourceBindingMode;
   entrypoint: string;
   rootKind: RootKind;
-  sourceId: string;
   sourceRemoteUrl?: string;
   sourceRepoName: string;
   treeMode: TreeMode;
   treeReference: BoundTreeReference;
   workspaceId?: string;
-  workspaceRootPath?: string;
 };
 
 export const BIND_USAGE = `usage: first-tree tree bind [--tree-path PATH | --tree-url URL] [--tree-mode dedicated|shared] [--mode source|standalone-source|shared-source|workspace-root|workspace-member] [--workspace-id ID] [--workspace-root PATH] [--entrypoint PATH]
@@ -176,19 +166,6 @@ function resolveWorkspaceId(
   return explicit?.trim() || repoNameForRoot(sourceRoot);
 }
 
-function resolveWorkspaceRootPath(
-  cwd: string,
-  sourceRoot: string,
-  bindingMode: SourceBindingMode,
-  explicit?: string,
-): string | undefined {
-  if (bindingMode !== "workspace-member") {
-    return undefined;
-  }
-
-  return explicit ? resolve(cwd, explicit) : dirname(sourceRoot);
-}
-
 function ensureTreeCheckout(
   cwd: string,
   sourceRoot: string,
@@ -226,7 +203,8 @@ function ensureTreeCheckout(
     );
   }
 
-  treeUrl = treeUrl ?? readGitRemoteUrl(treeRoot) ?? readTreeState(treeRoot)?.published?.remoteUrl;
+  treeUrl =
+    treeUrl ?? readGitRemoteUrl(treeRoot) ?? readTreeIdentityContract(treeRoot)?.publishedTreeUrl;
 
   return {
     treeRepoName: repoNameForRoot(treeRoot),
@@ -241,7 +219,13 @@ export function bindSourceRoot(
   commandCwd = process.cwd(),
 ): BindSummary {
   const treeResolution = ensureTreeCheckout(commandCwd, sourceRoot, options);
-  const binding = deriveBindingContext(sourceRoot, treeResolution, options, commandCwd);
+  const binding = deriveBindingContext(sourceRoot, treeResolution, options);
+
+  if (readTreeIdentityContract(treeResolution.treeRoot) === undefined) {
+    bootstrapTreeRoot(treeResolution.treeRoot, {
+      treeMode: binding.treeMode,
+    });
+  }
 
   copyCanonicalSkills(sourceRoot);
   copyCanonicalSkills(treeResolution.treeRoot);
@@ -254,75 +238,27 @@ export function bindSourceRoot(
     treeRepoUrl: treeResolution.treeUrl,
     workspaceId: binding.workspaceId,
   });
-
-  const existingSourceState = readSourceState(sourceRoot);
-  writeSourceState(sourceRoot, {
-    bindingMode: binding.bindingMode,
-    ...(binding.bindingMode === "workspace-root"
-      ? { members: existingSourceState?.members ?? [] }
-      : {}),
-    rootKind: binding.rootKind,
-    scope: determineScope(binding.bindingMode),
-    sourceId: binding.sourceId,
-    sourceName: binding.sourceRepoName,
-    tree: binding.treeReference,
-    ...(binding.workspaceId ? { workspaceId: binding.workspaceId } : {}),
-  });
+  removeSourceState(sourceRoot);
 
   writeBoundTreeState(
     treeResolution.treeRoot,
     treeResolution.treeRepoName,
     binding.treeMode,
-    binding.treeReference.treeId,
     treeResolution.treeUrl,
   );
 
-  writeTreeBinding(treeResolution.treeRoot, binding.sourceId, {
-    bindingMode: binding.bindingMode,
-    entrypoint: binding.entrypoint,
-    ...(binding.sourceRemoteUrl ? { remoteUrl: binding.sourceRemoteUrl } : {}),
-    rootKind: binding.rootKind,
-    scope: determineScope(binding.bindingMode),
-    sourceId: binding.sourceId,
-    sourceName: binding.sourceRepoName,
-    treeMode: binding.treeMode,
-    treeRepoName: treeResolution.treeRepoName,
-    ...(binding.workspaceId ? { workspaceId: binding.workspaceId } : {}),
-  });
+  if (binding.sourceRemoteUrl && parseGitHubRemoteUrl(binding.sourceRemoteUrl) !== null) {
+    upsertTreeCodeRepoRegistry(treeResolution.treeRoot, binding.sourceRemoteUrl);
+  }
 
   syncTreeSourceRepoIndex(treeResolution.treeRoot);
-
-  if (
-    binding.bindingMode === "workspace-member" &&
-    binding.workspaceId &&
-    binding.workspaceRootPath
-  ) {
-    const memberRelativePath = relativePathWithin(binding.workspaceRootPath, sourceRoot);
-    upsertWorkspaceMember(binding.workspaceRootPath, binding.workspaceId, binding.treeReference, {
-      bindingMode: "workspace-member",
-      entrypoint: binding.entrypoint,
-      ...(memberRelativePath ? { relativePath: memberRelativePath } : {}),
-      ...(binding.sourceRemoteUrl ? { remoteUrl: binding.sourceRemoteUrl } : {}),
-      rootKind: binding.rootKind,
-      sourceId: binding.sourceId,
-      sourceName: binding.sourceRepoName,
-    });
-  }
 
   return {
     bindingMode: binding.bindingMode,
     rootKind: binding.rootKind,
     sourceRoot,
-    sourceStatePath: join(sourceRoot, ".first-tree", "source.json"),
-    treeBindingPath: join(
-      treeResolution.treeRoot,
-      ".first-tree",
-      "bindings",
-      `${binding.sourceId}.json`,
-    ),
     treeMode: binding.treeMode,
     treeRoot: treeResolution.treeRoot,
-    treeStatePath: join(treeResolution.treeRoot, ".first-tree", "tree.json"),
     ...(binding.workspaceId ? { workspaceId: binding.workspaceId } : {}),
   };
 }
@@ -331,17 +267,12 @@ function deriveBindingContext(
   sourceRoot: string,
   treeResolution: { treeRepoName: string; treeRoot: string; treeUrl?: string },
   options: BindOptions,
-  commandCwd: string,
 ): BindingContext {
   const sourceRepoName = repoNameForRoot(sourceRoot);
   const treeMode = inferTreeMode(sourceRepoName, treeResolution.treeRepoName, options.treeMode);
   const bindingMode = resolveBindingMode(options.mode, treeMode);
   const workspaceId = resolveWorkspaceId(sourceRoot, bindingMode, options.workspaceId);
   const sourceRemoteUrl = isGitRepoRoot(sourceRoot) ? readGitRemoteUrl(sourceRoot) : undefined;
-  const sourceId = buildStableSourceId(sourceRepoName, {
-    fallbackRoot: sourceRoot,
-    remoteUrl: sourceRemoteUrl,
-  });
   const entrypoint =
     options.entrypoint ?? deriveDefaultEntrypoint(bindingMode, sourceRepoName, workspaceId);
 
@@ -349,7 +280,6 @@ function deriveBindingContext(
     bindingMode,
     entrypoint,
     rootKind: isGitRepoRoot(sourceRoot) ? "git-repo" : "folder",
-    sourceId,
     ...(sourceRemoteUrl ? { sourceRemoteUrl } : {}),
     sourceRepoName,
     treeMode,
@@ -361,16 +291,6 @@ function deriveBindingContext(
       treeRepoName: treeResolution.treeRepoName,
     },
     ...(workspaceId ? { workspaceId } : {}),
-    ...(bindingMode === "workspace-member"
-      ? {
-          workspaceRootPath: resolveWorkspaceRootPath(
-            commandCwd,
-            sourceRoot,
-            bindingMode,
-            options.workspaceRoot,
-          ),
-        }
-      : {}),
   };
 }
 
@@ -378,15 +298,13 @@ function writeBoundTreeState(
   treeRoot: string,
   treeRepoName: string,
   treeMode: TreeMode,
-  treeId: string,
   resolvedTreeUrl?: string,
 ): void {
-  const existingTreeState = readTreeState(treeRoot);
-  const publishedRemote = resolvedTreeUrl ?? existingTreeState?.published?.remoteUrl;
+  const existingIdentity = readTreeIdentityContract(treeRoot);
+  const publishedTreeUrl = resolvedTreeUrl ?? existingIdentity?.publishedTreeUrl;
 
-  writeTreeState(treeRoot, {
-    ...(publishedRemote ? { published: { remoteUrl: publishedRemote } } : {}),
-    treeId,
+  syncTreeIdentityFiles(treeRoot, {
+    ...(publishedTreeUrl ? { publishedTreeUrl } : {}),
     treeMode,
     treeRepoName,
   });
@@ -413,9 +331,9 @@ function runBindCommand(context: CommandContext): void {
       console.log(`  Workspace id:          ${summary.workspaceId}`);
     }
     console.log("");
-    console.log(`  Wrote ${summary.sourceStatePath}.`);
-    console.log(`  Wrote ${summary.treeStatePath}.`);
-    console.log(`  Wrote ${summary.treeBindingPath}.`);
+    console.log("  Updated AGENTS.md / CLAUDE.md managed binding blocks.");
+    console.log("  Updated tree repo managed identity block.");
+    console.log("  Updated tree repo managed code-repo registry.");
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;

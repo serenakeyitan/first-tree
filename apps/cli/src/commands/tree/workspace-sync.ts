@@ -4,7 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import type { Command } from "commander";
 
 import type { CommandContext, SubcommandModule } from "../types.js";
-import { readSourceState } from "./binding-state.js";
+import { readSourceBindingContract } from "./binding-contract.js";
 import { bindSourceRoot } from "./bind.js";
 import { discoverWorkspaceRepos, isGitRepoRoot, repoNameForRoot, runCommand } from "./shared.js";
 import { upsertLocalTreeGitIgnore } from "./source-integration.js";
@@ -78,9 +78,9 @@ function resolveWorkspacePlan(context: CommandContext): {
   const options = readWorkspaceSyncOptions(context.command);
   const workspaceRoot = resolve(process.cwd());
   const workspaceId = options.workspaceId?.trim() || repoNameForRoot(workspaceRoot);
-  const rootSourceState = readSourceState(workspaceRoot);
-  const treeRepoName = rootSourceState?.tree.treeRepoName;
-  const treeUrl = options.treeUrl ?? rootSourceState?.tree.remoteUrl;
+  const rootBinding = readSourceBindingContract(workspaceRoot);
+  const treeRepoName = rootBinding?.treeRepoName;
+  const treeUrl = options.treeUrl ?? rootBinding?.treeRepoUrl;
   const treePath = options.treePath
     ? resolve(workspaceRoot, options.treePath)
     : treeRepoName

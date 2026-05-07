@@ -15,6 +15,7 @@ import {
   stripTreeRepoArg,
 } from "../src/commands/github/scan-binding.js";
 import { inspectCurrentWorkingTree, runInspectCommand } from "../src/commands/tree/inspect.js";
+import { buildSourceIntegrationBlock } from "../src/commands/tree/source-integration.js";
 import { runStatusCommand } from "../src/commands/tree/status.js";
 import type { CommandContext, SubcommandModule } from "../src/commands/types.js";
 
@@ -130,17 +131,16 @@ describe("inspectCurrentWorkingTree", () => {
 
   it("classifies a workspace root from source binding metadata", () => {
     const root = makeTempDir();
-    mkdirSync(join(root, ".first-tree"), { recursive: true });
     writeFileSync(join(root, ".git"), "gitdir: /tmp/mock\n");
-    writeJson(join(root, ".first-tree", "source.json"), {
-      bindingMode: "workspace-root",
-      scope: "workspace",
-      tree: {
+    writeFileSync(
+      join(root, "AGENTS.md"),
+      `${buildSourceIntegrationBlock("context", {
+        bindingMode: "workspace-root",
         entrypoint: "members/platform",
-        remoteUrl: "git@github.com:acme/context.git",
         treeMode: "shared",
-      },
-    });
+        treeRepoUrl: "git@github.com:acme/context.git",
+      })}\n`,
+    );
 
     const result = inspectCurrentWorkingTree(root);
 
@@ -183,19 +183,17 @@ describe("runInspectCommand", () => {
 
   it("prints human-readable output with binding details", () => {
     const root = makeTempDir();
-    mkdirSync(join(root, ".first-tree"), { recursive: true });
     writeFileSync(join(root, ".git"), "gitdir: /tmp/mock\n");
-    writeJson(join(root, ".first-tree", "source.json"), {
-      bindingMode: "shared-source",
-      scope: "repo",
-      treeRepo: "acme/context",
-      tree: {
+    writeFileSync(
+      join(root, "AGENTS.md"),
+      `${buildSourceIntegrationBlock("context", {
+        bindingMode: "shared-source",
         entrypoint: ".",
-        treeRepoName: "context",
         treeMode: "shared",
-        remoteUrl: "https://github.com/acme/context.git",
-      },
-    });
+        treeRepoName: "context",
+        treeRepoUrl: "https://github.com/acme/context.git",
+      })}\n`,
+    );
 
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     process.chdir(root);
@@ -297,6 +295,31 @@ describe("github scan binding helpers", () => {
 
   it("resolves binding data from source.json", () => {
     const root = makeTempDir();
+    writeFileSync(
+      join(root, "AGENTS.md"),
+      `${buildSourceIntegrationBlock("context", {
+        bindingMode: "shared-source",
+        entrypoint: "/repos/app",
+        treeMode: "shared",
+        treeRepoName: "context",
+        treeRepoUrl: "https://github.com/acme/context.git",
+      })}\n`,
+    );
+    process.chdir(root);
+
+    const result = resolveGitHubScanBinding(["poll"]);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.source).toBe("managed-file");
+      expect(result.treeRepo).toBe("acme/context");
+      expect(result.treeRepoName).toBe("context");
+      expect(result.managedBindingPath?.endsWith("/AGENTS.md")).toBe(true);
+    }
+  });
+
+  it("falls back to source.json when managed binding files are absent", () => {
+    const root = makeTempDir();
     mkdirSync(join(root, ".first-tree"), { recursive: true });
     writeJson(join(root, ".first-tree", "source.json"), {
       tree: {
@@ -312,7 +335,6 @@ describe("github scan binding helpers", () => {
     if (result.ok) {
       expect(result.source).toBe("source-state");
       expect(result.treeRepo).toBe("acme/context");
-      expect(result.treeRepoName).toBe("context");
       expect(result.sourceStatePath?.endsWith("/.first-tree/source.json")).toBe(true);
     }
   });
@@ -347,7 +369,7 @@ describe("github scan binding helpers", () => {
     const result = resolveGitHubScanBinding(["poll"]);
 
     expect(result.ok).toBe(false);
-    expect(result.error).toContain(".first-tree/source.json");
+    expect(result.error).toContain("AGENTS.md");
   });
 
   it("returns an actionable error when no binding metadata exists", () => {

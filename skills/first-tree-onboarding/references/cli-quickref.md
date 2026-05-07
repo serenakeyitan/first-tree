@@ -82,6 +82,6 @@ re-launching after `stop`. `doctor` is the read-only health check.
 - `first-tree github scan run` / `daemon` / `run-once` — those are foreground
   loops for debugging, not the user-facing daemon path. Use `start` /
   `install` instead.
-- Any direct edit of `.first-tree/source.json` or `.first-tree/tree.json` —
-  let the CLI manage state. If the file looks corrupt, re-run `tree init`
-  with the right flags.
+- Any direct edit of the managed First Tree blocks in `AGENTS.md` /
+  `CLAUDE.md` — let the CLI manage state. If the block looks wrong, re-run
+  `tree init` with the right flags.

@@ -53,7 +53,8 @@ When write wants sync to follow up on adjacent drift:
 
 ## What Both Skills Share
 
-- They both consume the bound tree repo from `.first-tree/source.json`.
+- They both consume the bound tree repo from the managed First Tree
+  integration block in `AGENTS.md` / `CLAUDE.md`.
 - They both default to "code is the ground truth" except where
   `decisionLocksCode: true` is set on the node.
 - They both must use `tree verify` before a final commit.

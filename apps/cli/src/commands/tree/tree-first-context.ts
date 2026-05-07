@@ -1,13 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import {
-  TREE_SOURCE_REPOS_FILE,
-  listTreeBindings,
-  readSourceState,
-  readTreeState,
-} from "./binding-state.js";
+import { TREE_SOURCE_REPOS_FILE } from "./binding-state.js";
+import { readSourceBindingContract } from "./binding-contract.js";
 import { buildSourceRepoIndexTable } from "./source-repo-index.js";
+import { readTreeIdentityContract } from "./tree-identity.js";
+import { listKnownTreeCodeRepos } from "./tree-repo-registry.js";
 
 const ROOT_NODE_FILE = "NODE.md";
 
@@ -35,10 +33,10 @@ export function buildTreeFirstContextBundle(currentRoot: string): TreeFirstConte
   }
 
   const rootNode = readFileSync(nodePath, "utf-8").trimEnd();
-  const bindings = listTreeBindings(resolved.treeRoot);
+  const repos = listKnownTreeCodeRepos(resolved.treeRoot);
   const sections = [rootNode];
   const repoContext = buildRepoContextSection(
-    bindings,
+    repos,
     resolved.currentEntrypoint,
     resolved.entrypointLabel,
   );
@@ -54,31 +52,31 @@ export function buildTreeFirstContextBundle(currentRoot: string): TreeFirstConte
 }
 
 function resolveTreeContextRoot(currentRoot: string): ResolvedTreeContextRoot | null {
-  if (readTreeState(currentRoot) !== null) {
+  if (readTreeIdentityContract(currentRoot) !== undefined) {
     return {
       entrypointLabel: "tree repo root",
       treeRoot: currentRoot,
     };
   }
 
-  const sourceState = readSourceState(currentRoot);
-  if (sourceState === null) {
+  const sourceBinding = readSourceBindingContract(currentRoot);
+  if (sourceBinding === undefined || sourceBinding.treeRepoName === undefined) {
     return null;
   }
 
-  const siblingRoot = join(dirname(currentRoot), sourceState.tree.treeRepoName);
-  if (readTreeState(siblingRoot) !== null) {
+  const siblingRoot = join(dirname(currentRoot), sourceBinding.treeRepoName);
+  if (readTreeIdentityContract(siblingRoot) !== undefined) {
     return {
-      currentEntrypoint: sourceState.tree.entrypoint,
+      currentEntrypoint: sourceBinding.entrypoint,
       entrypointLabel: "bound source/workspace root",
       treeRoot: siblingRoot,
     };
   }
 
-  const tempRoot = join(currentRoot, ".first-tree", "tmp", sourceState.tree.treeRepoName);
-  if (readTreeState(tempRoot) !== null) {
+  const tempRoot = join(currentRoot, ".first-tree", "tmp", sourceBinding.treeRepoName);
+  if (readTreeIdentityContract(tempRoot) !== undefined) {
     return {
-      currentEntrypoint: sourceState.tree.entrypoint,
+      currentEntrypoint: sourceBinding.entrypoint,
       entrypointLabel: "bound source/workspace root",
       treeRoot: tempRoot,
     };
@@ -100,24 +98,24 @@ function readFallbackLocalNode(currentRoot: string): TreeFirstContextBundle | nu
 }
 
 function buildRepoContextSection(
-  bindings: ReturnType<typeof listTreeBindings>,
+  repos: ReturnType<typeof listKnownTreeCodeRepos>,
   currentEntrypoint: string | undefined,
   entrypointLabel: string,
 ): string | null {
-  if (bindings.length === 0 && currentEntrypoint === undefined) {
+  if (repos.length === 0 && currentEntrypoint === undefined) {
     return null;
   }
 
   const lines = [
     "## Tree-First Cross-Repo Working Context",
     "",
-    "- Repo index source: `.first-tree/bindings/*.json`",
+    "- Repo index source: managed code-repo registry block in `AGENTS.md` / `CLAUDE.md`",
     `- Human-readable index: \`${TREE_SOURCE_REPOS_FILE}\` when present`,
     `- Current entrypoint: \`${currentEntrypoint ?? entrypointLabel}\``,
     "",
-    "## Bound Source/Workspace Repos",
+    "## Managed Code Repos",
     "",
-    ...buildSourceRepoIndexTable(bindings),
+    ...buildSourceRepoIndexTable(repos),
   ];
 
   return lines.join("\n");

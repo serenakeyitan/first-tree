@@ -223,7 +223,8 @@ function buildFirstTreeSkillSection(request: AgentRequest): string {
   );
   const syncSkillPath = join(workspaceRoot, ".agents", "skills", "first-tree-sync", "SKILL.md");
   const writeSkillPath = join(workspaceRoot, ".agents", "skills", "first-tree-write", "SKILL.md");
-  const sourceStatePath = join(workspaceRoot, ".first-tree", "source.json");
+  const agentsPath = join(workspaceRoot, "AGENTS.md");
+  const claudePath = join(workspaceRoot, "CLAUDE.md");
   const treeRepoLine =
     request.treeRepo === undefined ? "" : `- Bound tree repo: ${request.treeRepo}\n`;
 
@@ -231,7 +232,7 @@ function buildFirstTreeSkillSection(request: AgentRequest): string {
     `First Tree skill loading rules (REQUIRED):\n` +
     `- Before making any tree-related decision, read \`${whitepaperPath}\` if it exists; otherwise read \`${whitepaperSkillPath}\`.\n` +
     `- Always read \`${githubScanSkillPath}\` before deciding how to tag, comment, escalate, or route the notification.\n` +
-    `- Use \`${sourceStatePath}\` as the local binding source of truth for tree repo name, entrypoint, and workspace relationship.\n` +
+    `- Use the managed First Tree integration block in \`${agentsPath}\` or \`${claudePath}\` as the local binding source of truth for tree repo name, entrypoint, and workspace relationship.\n` +
     treeRepoLine +
     `\n` +
     `Route the task using exactly one of these paths:\n` +

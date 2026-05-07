@@ -2,6 +2,8 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 import type { CommandContext, SubcommandModule } from "../types.js";
+import { findUpwardsManagedSourceBinding, parseGitHubRepoReference } from "./binding-contract.js";
+import { findUpwardsManagedTreeIdentity } from "./tree-identity.js";
 
 type InspectClassification = "tree-repo" | "workspace-root" | "source-repo" | "git-repo" | "folder";
 type InspectRole =
@@ -75,29 +77,39 @@ function findUpwards(startDir: string, relativePath: string): string | undefined
   }
 }
 
-function parseGitHubRepo(value: string | undefined): string | undefined {
-  if (value === undefined) {
+function summarizeManagedBinding(
+  binding: ReturnType<typeof findUpwardsManagedSourceBinding>,
+): BindingSummary | undefined {
+  if (binding === undefined) {
     return undefined;
   }
 
-  const exactRepo = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.exec(value);
-
-  if (exactRepo !== null) {
-    return exactRepo[0];
-  }
-
-  const httpsMatch = /^https:\/\/github\.com\/([^/]+\/[^/]+?)(?:\.git)?$/u.exec(value);
-
-  if (httpsMatch?.[1] !== undefined) {
-    return httpsMatch[1];
-  }
-
-  const sshMatch = /^git@github\.com:([^/]+\/[^/]+?)(?:\.git)?$/u.exec(value);
-
-  return sshMatch?.[1];
+  return {
+    ...(binding.bindingMode ? { bindingMode: binding.bindingMode } : {}),
+    ...(binding.entrypoint ? { treeEntrypoint: binding.entrypoint } : {}),
+    ...(binding.scope ? { scope: binding.scope } : {}),
+    ...(binding.treeMode ? { treeMode: binding.treeMode } : {}),
+    ...(binding.treeRepoSlug ? { treeRepo: binding.treeRepoSlug } : {}),
+    ...(binding.treeRepoName ? { treeRepoName: binding.treeRepoName } : {}),
+    ...(binding.treeRepoUrl ? { treeRemoteUrl: binding.treeRepoUrl } : {}),
+  };
 }
 
-function readBindingSummary(sourceStatePath: string | undefined): BindingSummary | undefined {
+function summarizeManagedTreeIdentity(
+  identity: ReturnType<typeof findUpwardsManagedTreeIdentity>,
+): BindingSummary | undefined {
+  if (identity === undefined) {
+    return undefined;
+  }
+
+  return {
+    ...(identity.treeMode ? { treeMode: identity.treeMode } : {}),
+    ...(identity.treeRepoName ? { treeRepoName: identity.treeRepoName } : {}),
+    ...(identity.publishedTreeUrl ? { treeRemoteUrl: identity.publishedTreeUrl } : {}),
+  };
+}
+
+function readLegacyBindingSummary(sourceStatePath: string | undefined): BindingSummary | undefined {
   const parsed = readJson(sourceStatePath);
 
   if (!isRecord(parsed)) {
@@ -117,11 +129,11 @@ function readBindingSummary(sourceStatePath: string | undefined): BindingSummary
     treeMode: asString(tree.treeMode) ?? asString(tree.mode),
     treeRemoteUrl: asString(tree.remoteUrl),
     treeRepo:
-      parseGitHubRepo(asString(tree.repo)) ??
-      parseGitHubRepo(asString(tree.treeRepo)) ??
-      parseGitHubRepo(asString(parsed.treeRepo)) ??
-      parseGitHubRepo(asString(parsed.tree_repo)) ??
-      parseGitHubRepo(asString(tree.remoteUrl)),
+      parseGitHubRepoReference(asString(tree.repo)) ??
+      parseGitHubRepoReference(asString(tree.treeRepo)) ??
+      parseGitHubRepoReference(asString(parsed.treeRepo)) ??
+      parseGitHubRepoReference(asString(parsed.tree_repo)) ??
+      parseGitHubRepoReference(asString(tree.remoteUrl)),
     treeRepoName: asString(tree.treeRepoName),
   };
 }
@@ -163,10 +175,15 @@ function looksLikeWorkspaceRoot(rootPath: string): boolean {
 
 function resolveInspectRootPath(
   cwd: string,
+  sourceBindingRoot: string | undefined,
   sourceStatePath: string | undefined,
   treeStatePath: string | undefined,
   gitMarkerPath: string | undefined,
 ): string {
+  if (sourceBindingRoot !== undefined) {
+    return sourceBindingRoot;
+  }
+
   if (sourceStatePath !== undefined) {
     return dirname(dirname(sourceStatePath));
   }
@@ -187,7 +204,7 @@ function deriveClassification(
   hasNode: boolean,
   hasMembersNode: boolean,
   binding: BindingSummary | undefined,
-  sourceStatePath: string | undefined,
+  hasSourceBinding: boolean,
   gitMarkerPath: string | undefined,
 ): InspectClassification {
   if (treeStatePath !== undefined || (hasNode && hasMembersNode)) {
@@ -198,7 +215,7 @@ function deriveClassification(
     return "workspace-root";
   }
 
-  if (sourceStatePath !== undefined) {
+  if (hasSourceBinding) {
     return "source-repo";
   }
 
@@ -293,22 +310,37 @@ function formatInspectResult(result: InspectResult): string {
 }
 
 export function inspectCurrentWorkingTree(cwd = process.cwd()): InspectResult {
+  const managedBinding = findUpwardsManagedSourceBinding(cwd);
+  const managedTreeIdentity = findUpwardsManagedTreeIdentity(cwd);
   const sourceStatePath = findUpwards(cwd, ".first-tree/source.json");
   const treeStatePath = findUpwards(cwd, ".first-tree/tree.json");
   const gitMarkerPath = findUpwards(cwd, ".git");
-  const rootPath = resolveInspectRootPath(cwd, sourceStatePath, treeStatePath, gitMarkerPath);
-  const binding = readBindingSummary(sourceStatePath);
+  const rootPath = resolveInspectRootPath(
+    cwd,
+    managedBinding
+      ? dirname(managedBinding.path)
+      : managedTreeIdentity
+        ? dirname(managedTreeIdentity.path)
+        : undefined,
+    sourceStatePath,
+    treeStatePath,
+    gitMarkerPath,
+  );
+  const binding =
+    summarizeManagedBinding(managedBinding) ??
+    summarizeManagedTreeIdentity(managedTreeIdentity) ??
+    readLegacyBindingSummary(sourceStatePath);
   const hasNode = existsSync(join(rootPath, "NODE.md"));
   const hasMembersNode = existsSync(join(rootPath, "members", "NODE.md"));
   const treeRepoName = readTreeRepoName(treeStatePath);
   const workspaceLikeRoot = looksLikeWorkspaceRoot(rootPath);
 
   const classification = deriveClassification(
-    treeStatePath,
+    managedTreeIdentity?.path ?? treeStatePath,
     hasNode,
     hasMembersNode,
     binding,
-    sourceStatePath,
+    managedBinding !== undefined || sourceStatePath !== undefined,
     gitMarkerPath,
   );
   const role = deriveRole(classification, workspaceLikeRoot, gitMarkerPath);

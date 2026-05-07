@@ -4,7 +4,8 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { writeSourceState, writeTreeState } from "../src/commands/tree/binding-state.js";
+import { writeTreeState } from "../src/commands/tree/binding-state.js";
+import { buildSourceIntegrationBlock } from "../src/commands/tree/source-integration.js";
 import { runTreeReview } from "../src/commands/tree/review-helper.js";
 import { upgradeTargetRoot } from "../src/commands/tree/upgrade.js";
 
@@ -29,19 +30,15 @@ afterEach(() => {
 describe("upgradeTargetRoot", () => {
   it("upgrades a bound source root", () => {
     const sourceRoot = makeTempDir("first-tree-upgrade-source-");
-    writeSourceState(sourceRoot, {
-      bindingMode: "shared-source",
-      rootKind: "git-repo",
-      scope: "repo",
-      sourceId: "product-repo",
-      sourceName: "product-repo",
-      tree: {
+    writeFileSync(
+      join(sourceRoot, "AGENTS.md"),
+      `${buildSourceIntegrationBlock("context-tree", {
+        bindingMode: "shared-source",
         entrypoint: "/repos/product-repo",
-        treeId: "context-tree",
         treeMode: "shared",
         treeRepoName: "context-tree",
-      },
-    });
+      })}\n`,
+    );
 
     const summary = upgradeTargetRoot(sourceRoot);
 

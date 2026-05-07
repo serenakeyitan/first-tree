@@ -1,8 +1,13 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { TREE_SOURCE_REPOS_FILE, TreeBindingState, listTreeBindings } from "./binding-state.js";
+import { TREE_SOURCE_REPOS_FILE } from "./binding-state.js";
 import { ensureTrailingNewline, parseGitHubRemoteUrl } from "./shared.js";
+import {
+  buildTreeCodeRepoIndexNote,
+  listKnownTreeCodeRepos,
+  type ManagedTreeCodeRepo,
+} from "./tree-repo-registry.js";
 
 const ROOT_NODE_FILE = "NODE.md";
 const ROOT_REPO_INDEX_BEGIN = "<!-- BEGIN FIRST-TREE-SOURCE-REPO-INDEX -->";
@@ -19,36 +24,27 @@ export type SourceRepoIndexSyncResult = {
 };
 
 export function syncTreeSourceRepoIndex(treeRoot: string): SourceRepoIndexSyncResult {
-  const bindings = listTreeBindings(treeRoot);
+  const repos = listKnownTreeCodeRepos(treeRoot);
 
   return {
     agentsAction: upsertTreeAgentsRepoGuide(treeRoot),
-    indexAction: writeSourceRepoIndex(treeRoot, bindings),
+    indexAction: writeSourceRepoIndex(treeRoot, repos),
     rootNodeAction: upsertRootNodeRepoIndexSection(treeRoot),
   };
 }
 
-function compareBindings(left: TreeBindingState, right: TreeBindingState): number {
-  const nameOrder = left.sourceName.localeCompare(right.sourceName);
-  return nameOrder === 0 ? left.sourceId.localeCompare(right.sourceId) : nameOrder;
-}
-
-function formatRemoteCell(binding: TreeBindingState): string {
-  if (!binding.remoteUrl) {
-    return "Missing in binding metadata";
-  }
-
-  const github = parseGitHubRemoteUrl(binding.remoteUrl);
+function formatRemoteCell(repo: ManagedTreeCodeRepo): string {
+  const github = parseGitHubRemoteUrl(repo.url);
 
   if (github === null || github.host !== "github.com") {
-    return `\`${binding.remoteUrl}\``;
+    return `\`${repo.url}\``;
   }
 
   const webUrl = `https://${github.host}/${github.owner}/${github.repo}`;
   return `[${github.owner}/${github.repo}](${webUrl})`;
 }
 
-export function buildSourceRepoIndex(bindings: TreeBindingState[]): string {
+export function buildSourceRepoIndex(repos: ManagedTreeCodeRepo[]): string {
   const lines = [
     "---",
     'title: "Source Repos"',
@@ -57,45 +53,38 @@ export function buildSourceRepoIndex(bindings: TreeBindingState[]): string {
     "",
     "# Source Repos",
     "",
-    "Generated from `.first-tree/bindings/*.json`. This is the quickest index of the source/workspace repos described by this Context Tree. The binding JSON files remain the canonical machine-readable source of truth.",
+    "Generated from the managed code-repo registry block in `AGENTS.md` / `CLAUDE.md`. This is the quickest index of the code repos described by this Context Tree.",
     "",
   ];
 
-  if (bindings.length === 0) {
-    lines.push("No bound source/workspace repos have been recorded yet.", "");
+  if (repos.length === 0) {
+    lines.push("No managed code repos have been recorded yet.", "");
     return `${lines.join("\n")}\n`;
   }
 
-  lines.push(...buildSourceRepoIndexTable(bindings));
+  lines.push(...buildSourceRepoIndexTable(repos));
 
   lines.push("");
   return `${lines.join("\n")}\n`;
 }
 
-export function buildSourceRepoIndexTable(bindings: TreeBindingState[]): string[] {
-  if (bindings.length === 0) {
-    return ["No bound source/workspace repos have been recorded yet."];
+export function buildSourceRepoIndexTable(repos: ManagedTreeCodeRepo[]): string[] {
+  if (repos.length === 0) {
+    return ["No managed code repos have been recorded yet."];
   }
 
-  const lines = ["| Source | GitHub | Binding | Tree Entrypoint |", "| --- | --- | --- | --- |"];
+  const lines = ["| Source | GitHub |", "| --- | --- |"];
 
-  for (const binding of [...bindings].sort(compareBindings)) {
-    lines.push(
-      [
-        `| \`${binding.sourceName}\``,
-        formatRemoteCell(binding),
-        `\`${binding.bindingMode}\``,
-        `\`${binding.entrypoint}\` |`,
-      ].join(" | "),
-    );
+  for (const repo of repos) {
+    lines.push([`| \`${repo.name}\``, `${formatRemoteCell(repo)} |`].join(" | "));
   }
 
   return lines;
 }
 
-function writeSourceRepoIndex(treeRoot: string, bindings: TreeBindingState[]): SyncAction {
+function writeSourceRepoIndex(treeRoot: string, repos: ManagedTreeCodeRepo[]): SyncAction {
   const fullPath = join(treeRoot, TREE_SOURCE_REPOS_FILE);
-  const next = buildSourceRepoIndex(bindings);
+  const next = buildSourceRepoIndex(repos);
   const current = existsSync(fullPath) ? readFileSync(fullPath, "utf-8") : null;
 
   if (current === next) {
@@ -118,7 +107,7 @@ function upsertRootNodeRepoIndexSection(treeRoot: string): SyncAction {
     ROOT_REPO_INDEX_BEGIN,
     "## Source Repos",
     "",
-    `- **[Source Repos](${TREE_SOURCE_REPOS_FILE})** — Generated index of bound source/workspace repos and their GitHub URLs.`,
+    `- **[Source Repos](${TREE_SOURCE_REPOS_FILE})** — Generated index of managed code repos and their GitHub URLs.`,
     ROOT_REPO_INDEX_END,
   ].join("\n");
   const next = upsertManagedBlock(current, nextBlock, {
@@ -147,8 +136,8 @@ function upsertTreeAgentsRepoGuide(treeRoot: string): SyncAction {
     AGENTS_REPO_INDEX_BEGIN,
     "## Source Repo Index",
     "",
-    `- If \`${TREE_SOURCE_REPOS_FILE}\` exists in the tree root, use it as the quickest index of bound source/workspace repos and their GitHub URLs.`,
-    "- The canonical machine-readable source of truth remains `.first-tree/bindings/`.",
+    buildTreeCodeRepoIndexNote(),
+    "- The canonical machine-readable source of truth is the managed code-repo registry block in `AGENTS.md` / `CLAUDE.md`.",
     "- When you need current code, use that repo index to open the relevant source repo as an additional working directory and refresh it locally.",
     AGENTS_REPO_INDEX_END,
   ].join("\n");

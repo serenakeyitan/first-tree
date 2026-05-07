@@ -5,15 +5,10 @@ import type { Command } from "commander";
 
 import type { CommandContext, SubcommandModule } from "../types.js";
 import {
-  BoundTreeReference,
-  RootKind,
+  removeSourceState,
   SourceBindingMode,
   TreeMode,
-  buildStableSourceId,
-  buildTreeId,
   deriveDefaultEntrypoint,
-  determineScope,
-  writeSourceState,
 } from "./binding-state.js";
 import { copyCanonicalSkills } from "./skill-lib.js";
 import {
@@ -21,7 +16,7 @@ import {
   upsertLocalTreeGitIgnore,
   upsertSourceIntegrationFiles,
 } from "./source-integration.js";
-import { isGitRepoRoot, readGitRemoteUrl, repoNameForRoot, resolveRepoRoot } from "./shared.js";
+import { readGitRemoteUrl, repoNameForRoot, resolveRepoRoot } from "./shared.js";
 
 type IntegrateModeOption = SourceBindingMode | "source";
 
@@ -40,7 +35,7 @@ Install local first-tree integration without mutating the tree repo.
 
 Options:
   --tree-path PATH   Local checkout of the tree repo (required)
-  --tree-url URL     Tree repo URL recorded in source.json
+  --tree-url URL     Tree repo URL recorded in the managed binding block
   --tree-mode MODE   dedicated or shared (default: infer)
   --mode MODE        source, standalone-source, shared-source, workspace-root, or workspace-member
   --workspace-id ID  Workspace identifier for workspace-root/member integrations
@@ -135,21 +130,8 @@ function runIntegrateCommand(context: CommandContext): void {
       bindingMode === "workspace-root" || bindingMode === "workspace-member"
         ? options.workspaceId?.trim() || sourceRepoName
         : undefined;
-    const rootKind: RootKind = isGitRepoRoot(sourceRoot) ? "git-repo" : "folder";
-    const sourceRemoteUrl = isGitRepoRoot(sourceRoot) ? readGitRemoteUrl(sourceRoot) : undefined;
-    const sourceId = buildStableSourceId(sourceRepoName, {
-      fallbackRoot: sourceRoot,
-      remoteUrl: sourceRemoteUrl,
-    });
     const entrypoint =
       options.entrypoint ?? deriveDefaultEntrypoint(bindingMode, sourceRepoName, workspaceId);
-    const treeReference: BoundTreeReference = {
-      entrypoint,
-      ...(treeRemoteUrl ? { remoteUrl: treeRemoteUrl } : {}),
-      treeId: buildTreeId(treeRepoName),
-      treeMode,
-      treeRepoName,
-    };
 
     copyCanonicalSkills(sourceRoot);
     ensureWhitepaperSymlink(sourceRoot);
@@ -161,20 +143,11 @@ function runIntegrateCommand(context: CommandContext): void {
       treeRepoUrl: treeRemoteUrl,
       workspaceId,
     });
-    writeSourceState(sourceRoot, {
-      bindingMode,
-      rootKind,
-      scope: determineScope(bindingMode),
-      sourceId,
-      sourceName: sourceRepoName,
-      tree: treeReference,
-      ...(workspaceId ? { workspaceId } : {}),
-    });
+    removeSourceState(sourceRoot);
 
     const summary = {
       bindingMode,
       sourceRoot,
-      sourceStatePath: `${sourceRoot}/.first-tree/source.json`,
       treeMode,
       treeRepoName,
       treeRoot,
@@ -195,7 +168,7 @@ function runIntegrateCommand(context: CommandContext): void {
       console.log(`  Workspace id:          ${summary.workspaceId}`);
     }
     console.log("");
-    console.log(`  Wrote ${summary.sourceStatePath}.`);
+    console.log("  Updated AGENTS.md / CLAUDE.md managed binding blocks.");
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
