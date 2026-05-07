@@ -445,6 +445,28 @@ describe("first-tree program", () => {
     }
   });
 
+  it("accepts the deprecated --skip-version-check flag for hook compatibility", async () => {
+    const root = makeTempDir();
+    writeFileSync(join(root, "NODE.md"), "# Root\nbody\n");
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const previousCwd = process.cwd();
+    process.chdir(root);
+
+    try {
+      const result = await runProgram(
+        ["tree", "inject-context", "--skip-version-check"],
+        "0.0.0-test",
+      );
+
+      expect(result.code).toBe(0);
+      expect(result.stderr).toBe("");
+      const payload = JSON.parse(String(log.mock.calls[0]?.[0]));
+      expect(payload.hookSpecificOutput.hookEventName).toBe("SessionStart");
+    } finally {
+      process.chdir(previousCwd);
+    }
+  });
+
   it("bootstraps a tree repo in process", async () => {
     const treeRoot = makeTempDir();
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -693,9 +715,10 @@ describe("first-tree program", () => {
 
     expect(installResult.code).toBe(0);
     expect(listResult.code).toBe(0);
-    expect(String(log.mock.calls[0]?.[0])).toContain("Installed 5 shipped first-tree skills");
+    expect(String(log.mock.calls[0]?.[0])).toContain("Installed 6 shipped first-tree skills");
     expect(String(log.mock.calls[1]?.[0])).toContain('"name": "first-tree"');
     expect(String(log.mock.calls[1]?.[0])).toContain('"name": "first-tree-onboarding"');
+    expect(String(log.mock.calls[1]?.[0])).toContain('"name": "github-scan"');
     expect(String(log.mock.calls[1]?.[0])).toContain('"installed": true');
   });
 

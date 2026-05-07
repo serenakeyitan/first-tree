@@ -351,15 +351,15 @@ describe("first-tree CLI", () => {
     expect(result.code).toBe(0);
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain(".claude/settings.json");
-    expect(await readFile(resolve(root, ".claude", "settings.json"), "utf8")).toContain(
-      "first-tree tree inject-context",
-    );
+    const claudeSettings = await readFile(resolve(root, ".claude", "settings.json"), "utf8");
+    const codexHooks = await readFile(resolve(root, ".codex", "hooks.json"), "utf8");
+    expect(claudeSettings).toContain("first-tree tree inject-context");
+    expect(claudeSettings).not.toContain("--skip-version-check");
     expect(await readFile(resolve(root, ".codex", "config.toml"), "utf8")).toContain(
       "codex_hooks = true",
     );
-    expect(await readFile(resolve(root, ".codex", "hooks.json"), "utf8")).toContain(
-      "Loading First Tree context",
-    );
+    expect(codexHooks).toContain("Loading First Tree context");
+    expect(codexHooks).not.toContain("--skip-version-check");
   });
 
   it("emits inject-context payload from a local tree repo", async () => {
@@ -385,18 +385,21 @@ describe("first-tree CLI", () => {
     const linkResult = await runCli(["tree", "skill", "link", "--root", root]);
 
     expect(installResult.code).toBe(0);
-    expect(installResult.stdout).toContain("Installed 5 shipped first-tree skills");
+    expect(installResult.stdout).toContain("Installed 6 shipped first-tree skills");
 
     expect(listResult.code).toBe(0);
     expect(listResult.stdout).toContain("first-tree-onboarding");
+    expect(listResult.stdout).toContain("github-scan");
     expect(listResult.stdout).toContain("installed");
     const listJson = JSON.parse(listJsonResult.stdout);
     expect(listJson[0].cliCompat).toBe(">=0.4.0 <0.5.0");
     expect(listJson[0].cliVersion).toBe("0.4.0-alpha.1");
+    expect(listJson.some((row) => row.name === "github-scan")).toBe(true);
 
     expect(doctorResult.code).toBe(0);
     expect(doctorResult.stdout).toContain("OK first-tree");
     expect(doctorResult.stdout).toContain("OK first-tree-github-scan");
+    expect(doctorResult.stdout).toContain("OK github-scan");
 
     expect(linkResult.code).toBe(0);
     expect(linkResult.stdout).toContain("Linked");
