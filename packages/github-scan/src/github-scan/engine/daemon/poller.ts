@@ -95,6 +95,17 @@ export interface PollerOptions {
    * limits. Tests can replace this with an instant resolver.
    */
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  /**
+   * Optional callback fired after each successful (non-rate-limited) cycle.
+   * Receives the cycle outcome plus the timestamp, so observers can run
+   * follow-up work (the island feature uses this to enrich `human` entries
+   * with LLM action recommendations).
+   *
+   * Errors thrown by the callback are caught and logged; they do not abort
+   * the poller loop. The callback is awaited, so a slow observer slows the
+   * next cycle — observers should bound their own runtime.
+   */
+  onPollComplete?: (outcome: PollOutcome) => Promise<void> | void;
 }
 
 export interface PollOutcome {
@@ -330,6 +341,15 @@ export async function runPoller(options: PollerOptions): Promise<void> {
 
     rateLimitStreak = 0;
     logger.info(`github-scan: polled ${outcome.total} notifications (${outcome.newCount} new)`);
+    if (options.onPollComplete) {
+      try {
+        await options.onPollComplete(outcome);
+      } catch (err) {
+        logger.warn(
+          `onPollComplete observer threw: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
     await sleep(options.pollIntervalSec * 1000, signal);
   }
 }
