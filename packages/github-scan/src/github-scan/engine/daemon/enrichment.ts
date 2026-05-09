@@ -152,13 +152,27 @@ interface SpawnResult {
  * Spawn the claude CLI with the given prompt and wait for completion.
  * Returns stdout/stderr/exit code rather than throwing — caller decides
  * how to handle non-zero exits.
+ *
+ * Auth model: we deliberately do NOT pass `--bare`. `--bare` disables
+ * OAuth lookup entirely (claude --help: "OAuth and keychain are never
+ * read"), forcing ANTHROPIC_API_KEY usage. The island design uses the
+ * user's own Claude subscription, so OAuth must work. We instead pass
+ * `--setting-sources ""` and `--no-session-persistence` to keep the
+ * spawn clean (no user CLAUDE.md / hooks / project memory loaded into
+ * the prompt) without breaking auth.
+ *
+ * One quirk: when run as a child of Claude Desktop / Claude Code itself,
+ * the parent injects an empty `ANTHROPIC_API_KEY=""`. The CLI treats
+ * that as "API key configured" and skips OAuth, then 401s. We strip it
+ * out of the spawn env (only when blank) so OAuth fallback works.
  */
 async function spawnClaude(prompt: string, deps: EnrichmentDeps): Promise<SpawnResult> {
   const exe = deps.claudeBinary ?? "claude";
   const args = [
     "-p",
-    "--bare",
     "--no-session-persistence",
+    "--setting-sources",
+    "",
     "--output-format",
     "json",
     "--json-schema",
@@ -168,6 +182,10 @@ async function spawnClaude(prompt: string, deps: EnrichmentDeps): Promise<SpawnR
 
   const env: NodeJS.ProcessEnv = { ...process.env };
   if (deps.pathEnv) env.PATH = deps.pathEnv;
+  // Don't let an empty ANTHROPIC_API_KEY (injected by Claude Desktop into
+  // child envs) suppress OAuth fallback. Only delete when blank — a real
+  // key should still take precedence.
+  if (env.ANTHROPIC_API_KEY === "") delete env.ANTHROPIC_API_KEY;
 
   return new Promise<SpawnResult>((resolve) => {
     const child = spawn(exe, args, { env, stdio: ["pipe", "pipe", "pipe"] });
