@@ -43,6 +43,9 @@ import {
 import { acquireServiceLock, type ServiceLockHandle } from "./claim.js";
 import { startHttpServer, type RunningHttpServer } from "./http.js";
 import { pollOnce, runPoller, type PollerLogger } from "./poller.js";
+import { enrichBatch, translate as translateAction } from "./enrichment.js";
+import { evictStale } from "../runtime/recommendations-store.js";
+import { readInbox } from "../runtime/store.js";
 import { GhClient as CoreGhClient } from "../runtime/gh.js";
 import type { GitHubScanPaths } from "../runtime/paths.js";
 import { createBus, toSseBus, type Bus } from "./bus.js";
@@ -558,6 +561,19 @@ export async function runDaemon(
         bus: toSseBus(bus),
         signal: controller.signal,
         logger,
+        // Island feature: tell the HTTP layer where to find the
+        // recommendation cache so /inbox can join it on read.
+        recommendationsPath: paths.recommendations,
+        // Island feature: enable POST /inbox/:id/translate. The handler
+        // looks up the entry by id (so the LLM has context) and spawns
+        // the user's local claude CLI to do the translation.
+        translateHandler: async (entryId, userText) => {
+          const inbox = readInbox(paths.inbox);
+          if (!inbox) return { ok: false, error: "inbox not initialized" };
+          const entry = inbox.notifications.find((n) => n.id === entryId);
+          if (!entry) return { ok: false, error: `unknown entry id: ${entryId}` };
+          return await translateAction(entry, userText, {});
+        },
       });
     } catch (err) {
       logger.error(
@@ -611,6 +627,46 @@ export async function runDaemon(
         signal: controller.signal,
         logger,
         agentLogin: config.agentLogin ?? identity?.login,
+        // Island feature: after each successful poll cycle, re-read the
+        // inbox and run the LLM enrichment over any `human` entries that
+        // don't yet have a fresh recommendation. Errors here are isolated
+        // by the poller (see PollerOptions.onPollComplete).
+        onPollComplete: async () => {
+          const inbox = readInbox(paths.inbox);
+          if (!inbox) return;
+          const liveIds = new Set(inbox.notifications.map((n) => n.id));
+          // Drop cached recommendations for entries that have left the inbox.
+          await evictStale(liveIds, {
+            recommendationsPath: paths.recommendations,
+          });
+          // Generate or refresh recommendations for human entries.
+          const stats = await enrichBatch(
+            inbox.notifications,
+            {
+              recommendationsPath: paths.recommendations,
+              logger: {
+                info: (m) => logger.info(`enrichment: ${m}`),
+                warn: (m) => logger.warn(`enrichment: ${m}`),
+                error: (m) => logger.error(`enrichment: ${m}`),
+              },
+            },
+            (rec) => {
+              // Publish to the bus so SSE subscribers (the tray) can react
+              // without re-polling /inbox.
+              bus.publish({
+                kind: "recommendation",
+                id: rec.id,
+                summary: rec.summary,
+                action_kind: rec.action.kind,
+              });
+            },
+          );
+          if (stats.wrote > 0 || stats.errors > 0) {
+            logger.info(
+              `enrichment: cycle complete — wrote=${stats.wrote} cacheHits=${stats.cacheHits} errors=${stats.errors}`,
+            );
+          }
+        },
       });
     }
   } catch (err) {

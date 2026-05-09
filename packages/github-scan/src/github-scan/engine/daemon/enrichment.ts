@@ -166,7 +166,7 @@ interface SpawnResult {
  * that as "API key configured" and skips OAuth, then 401s. We strip it
  * out of the spawn env (only when blank) so OAuth fallback works.
  */
-async function spawnClaude(prompt: string, deps: EnrichmentDeps): Promise<SpawnResult> {
+export async function spawnClaude(prompt: string, deps: EnrichmentDeps): Promise<SpawnResult> {
   const exe = deps.claudeBinary ?? "claude";
   const args = [
     "-p",
@@ -233,7 +233,7 @@ async function spawnClaude(prompt: string, deps: EnrichmentDeps): Promise<SpawnR
  * If the wrapper isn't recognized, fall back to treating stdout as the
  * raw result (some `claude` versions have varied this surface).
  */
-function extractResultPayload(stdout: string): string {
+export function extractResultPayload(stdout: string): string {
   const trimmed = stdout.trim();
   if (trimmed.length === 0) return trimmed;
   try {
@@ -382,4 +382,111 @@ export async function enrichBatch(
     }
   }
   return { wrote, cacheHits, errors };
+}
+
+/**
+ * Build the LLM prompt for the single-shot natural-language → action
+ * translation used by the island's "Do other..." path. The LLM sees:
+ *   - the inbox entry context (so it knows what's being acted on)
+ *   - the user's free-text instruction
+ *   - the same whitelist + JSON-schema constraint as `buildPrompt`
+ *
+ * Conservatism is reduced here vs the auto-suggestion prompt: the user
+ * has explicitly asked for an action, so we should follow their lead
+ * (subject to whitelist).
+ */
+export function buildTranslatePrompt(entry: InboxEntry, userText: string): string {
+  const number = entry.number ?? 0;
+  const target = entry.type === "PullRequest" ? "PR" : "issue";
+  return [
+    `You are translating a developer's natural-language instruction into a`,
+    `structured GitHub action.`,
+    ``,
+    `Context — the notification they're acting on:`,
+    `  Repository: ${entry.repo}`,
+    `  Type: ${entry.type}`,
+    `  Title: ${entry.title}`,
+    `  ${target} number: ${number}`,
+    `  URL: ${entry.html_url}`,
+    `  State: ${entry.gh_state ?? "unknown"}`,
+    ``,
+    `The developer says:`,
+    `  ${userText.replace(/\n/g, "\n  ")}`,
+    ``,
+    `Translate that into ONE of the four whitelisted actions:`,
+    `  - approve_pr        approve a PR`,
+    `  - comment           leave a comment with the body the user implied`,
+    `  - close_issue       close an issue (with an explanatory comment)`,
+    `  - request_changes   request changes on a PR (with the user's body)`,
+    ``,
+    `Return ONLY a JSON object matching the provided schema. Do not include any prose.`,
+    ``,
+    `Use the user's words for any body/comment field — do not paraphrase or`,
+    `soften unless they ask. If the user's instruction does not fit any`,
+    `whitelisted action, default to "comment" with the user's text as the body.`,
+  ].join("\n");
+}
+
+export interface TranslateResult {
+  ok: true;
+  summary: string;
+  rationale: string;
+  action: Action;
+}
+export interface TranslateError {
+  ok: false;
+  error: string;
+}
+
+/**
+ * Single-shot translate. Spawns claude with the same JSON-schema
+ * constraint as `enrichOne` but with the translate prompt. Used by the
+ * `POST /inbox/:id/translate` route.
+ *
+ * Does NOT touch the recommendations cache — the result goes straight
+ * back to the caller, who decides whether to execute.
+ */
+export async function translate(
+  entry: InboxEntry,
+  userText: string,
+  deps: Omit<EnrichmentDeps, "recommendationsPath"> & { recommendationsPath?: string },
+): Promise<TranslateResult | TranslateError> {
+  const prompt = buildTranslatePrompt(entry, userText);
+  const spawnResult = await spawnClaude(prompt, {
+    ...deps,
+    recommendationsPath: deps.recommendationsPath ?? "/dev/null",
+  });
+  if (spawnResult.timedOut) {
+    return { ok: false, error: "claude CLI timed out" };
+  }
+  if (spawnResult.code !== 0) {
+    return {
+      ok: false,
+      error: `claude CLI exited ${spawnResult.code ?? "null"}: ${spawnResult.stderr.slice(0, 500)}`,
+    };
+  }
+  const payload = extractResultPayload(spawnResult.stdout);
+  if (payload.length === 0) {
+    return { ok: false, error: "claude CLI produced empty output" };
+  }
+  let json: unknown;
+  try {
+    json = JSON.parse(payload);
+  } catch (err) {
+    return {
+      ok: false,
+      error: `claude CLI output was not JSON: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+  const inner = json as { summary?: unknown; rationale?: unknown; action?: unknown };
+  const parsed = ActionSchema.safeParse(inner.action);
+  if (!parsed.success || typeof inner.summary !== "string" || typeof inner.rationale !== "string") {
+    return { ok: false, error: "claude CLI output failed schema validation" };
+  }
+  return {
+    ok: true,
+    summary: inner.summary.slice(0, 200),
+    rationale: inner.rationale.slice(0, 2000),
+    action: parsed.data,
+  };
 }
