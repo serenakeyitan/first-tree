@@ -44,6 +44,27 @@ func postUserNotification(title: String, body: String) {
 
 // MARK: - Model
 
+/// One of the four whitelisted action kinds the daemon's enrichment worker
+/// is allowed to produce. Mirrors the TS-side `Action` discriminated union.
+/// The tray validates this AGAIN before dispatching, so even if the daemon
+/// were compromised the tray's whitelist holds.
+enum ActionKind: String, Codable, Hashable {
+    case approvePr = "approve_pr"
+    case comment = "comment"
+    case closeIssue = "close_issue"
+    case requestChanges = "request_changes"
+}
+
+/// LLM-produced action recommendation for a `human` inbox entry.
+/// `args` is an opaque dictionary because the per-kind shape varies; the
+/// dispatcher decodes it per-kind under a strict whitelist.
+struct InboxRecommendation: Hashable {
+    let summary: String
+    let rationale: String
+    let actionKind: ActionKind
+    let actionArgs: [String: AnyCodable]
+}
+
 struct InboxItem: Identifiable, Hashable {
     let id: String
     let number: Int
@@ -51,6 +72,7 @@ struct InboxItem: Identifiable, Hashable {
     let repo: String
     let title: String
     let htmlURL: URL
+    let recommendation: InboxRecommendation?
 
     var repoShort: String {
         repo.split(separator: "/").last.map(String.init) ?? repo
@@ -63,6 +85,39 @@ struct InboxItem: Identifiable, Hashable {
         case "Discussion":  return "bubble.left"
         case "Release":     return "shippingbox"
         default:            return "bell"
+        }
+    }
+}
+
+/// Type-erased Codable value for action.args so we can serialize back to
+/// the daemon (or shell out) without knowing every action kind's shape
+/// at this layer. Strictly limited to JSON primitives.
+struct AnyCodable: Hashable, Codable {
+    let value: AnyHashable
+
+    init(_ value: AnyHashable) { self.value = value }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if let s = try? c.decode(String.self) { value = s; return }
+        if let i = try? c.decode(Int.self) { value = i; return }
+        if let d = try? c.decode(Double.self) { value = d; return }
+        if let b = try? c.decode(Bool.self) { value = b; return }
+        if c.decodeNil() { value = "" as AnyHashable; return }
+        throw DecodingError.dataCorruptedError(
+            in: c,
+            debugDescription: "AnyCodable: unsupported value"
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        switch value {
+        case let s as String: try c.encode(s)
+        case let i as Int: try c.encode(i)
+        case let d as Double: try c.encode(d)
+        case let b as Bool: try c.encode(b)
+        default: try c.encodeNil()
         }
     }
 }
@@ -212,9 +267,21 @@ final class InboxModel: ObservableObject {
                 .filter { $0.github_scan_status == "human" }
                 .compactMap { n in
                     guard let url = URL(string: n.html_url) else { return nil }
+                    let rec: InboxRecommendation? = {
+                        guard let r = n.recommendation,
+                              let kind = ActionKind(rawValue: r.action.kind)
+                        else { return nil }
+                        return InboxRecommendation(
+                            summary: r.summary,
+                            rationale: r.rationale,
+                            actionKind: kind,
+                            actionArgs: r.action.args
+                        )
+                    }()
                     return InboxItem(
                         id: n.id, number: n.number ?? 0, type: n.type,
-                        repo: n.repo, title: n.title, htmlURL: url
+                        repo: n.repo, title: n.title, htmlURL: url,
+                        recommendation: rec
                     )
                 }
             // GC: drop seen IDs the daemon no longer tracks (item resolved/removed).
@@ -649,6 +716,26 @@ private struct InboxNotification: Decodable {
     let html_url: String
     let number: Int?
     let github_scan_status: String?
+    /// Island feature: present when the daemon's enrichment worker has
+    /// produced an LLM action recommendation for this entry. Absent
+    /// when the entry is not `human`-status, or when the LLM call
+    /// failed / hadn't completed yet.
+    let recommendation: InboxRecommendationWire?
+}
+
+/// Wire shape of the recommendation field. The daemon validates the
+/// action shape at parse time, so by the time we get here it's
+/// guaranteed to be one of the four whitelisted kinds. We re-validate
+/// here anyway (defense in depth) before constructing InboxRecommendation.
+private struct InboxRecommendationWire: Decodable {
+    let summary: String
+    let rationale: String
+    let action: InboxActionWire
+}
+
+private struct InboxActionWire: Decodable {
+    let kind: String
+    let args: [String: AnyCodable]
 }
 
 // MARK: - App
@@ -657,17 +744,54 @@ private struct InboxNotification: Decodable {
 struct FirstTreeTrayApp: App {
     @StateObject private var inbox = InboxModel()
     @StateObject private var daemon = DaemonController()
+    // Island feature.
+    @StateObject private var sse = IslandSSEClient()
+    @StateObject private var ignored = IgnoredStore()
 
     var body: some Scene {
         MenuBarExtra {
             DropdownView()
                 .environmentObject(inbox)
                 .environmentObject(daemon)
+                .environmentObject(ignored)
         } label: {
             TrayLabel()
                 .environmentObject(inbox)
+                .environmentObject(sse)
+                .environmentObject(ignored)
+                .onAppear {
+                    // Inject the env objects into the island root view's
+                    // hosting controller. The NSPanel is created lazily
+                    // by IslandWindowManager.present(), so this onAppear
+                    // is just a safe place to start the SSE stream.
+                    sse.start()
+                    IslandEnvironmentBridge.shared.attach(
+                        inbox: inbox, sse: sse, ignored: ignored
+                    )
+                }
         }
         .menuBarExtraStyle(.window)
+    }
+}
+
+/// Bridges the SwiftUI app-scene env objects into the IslandRootView
+/// that lives inside the NSPanel hosted by IslandWindowManager. We can't
+/// just write `.environmentObject(...)` on the panel's hosting view
+/// because the panel is created in AppKit-land outside the App scene's
+/// view tree.
+@MainActor
+final class IslandEnvironmentBridge {
+    static let shared = IslandEnvironmentBridge()
+    private init() {}
+
+    private(set) var inbox: InboxModel?
+    private(set) var sse: IslandSSEClient?
+    private(set) var ignored: IgnoredStore?
+
+    func attach(inbox: InboxModel, sse: IslandSSEClient, ignored: IgnoredStore) {
+        self.inbox = inbox
+        self.sse = sse
+        self.ignored = ignored
     }
 }
 
@@ -716,6 +840,7 @@ struct TrayLabel: View {
 struct DropdownView: View {
     @EnvironmentObject var inbox: InboxModel
     @EnvironmentObject var daemon: DaemonController
+    @EnvironmentObject var ignored: IgnoredStore
     @Environment(\.openURL) var openURL
 
     var body: some View {
@@ -725,6 +850,7 @@ struct DropdownView: View {
                 .environmentObject(daemon)
             Divider().padding(.horizontal, 4).padding(.vertical, 2)
             content
+            ignoredSection
             Divider().padding(.horizontal, 4).padding(.vertical, 2)
             FooterButton(title: "Open dashboard", systemImage: "rectangle.on.rectangle") {
                 openURL(URL(string: "\(daemonBaseURL)/")!)
@@ -738,7 +864,31 @@ struct DropdownView: View {
         }
         .padding(.vertical, 4)
         .padding(.horizontal, 4)
-        .frame(minWidth: 200, idealWidth: 200, maxWidth: 260)
+        .frame(minWidth: 240, idealWidth: 260, maxWidth: 320)
+    }
+
+    /// Items the user has clicked Ignore on (island feature). They stay
+    /// in the dropdown so the user can revisit them. They count toward
+    /// the unseen badge until the daemon transitions them out of `human`.
+    @ViewBuilder
+    private var ignoredSection: some View {
+        let ignoredItems = inbox.allItems.filter { ignored.ignored.contains($0.id) }
+        if !ignoredItems.isEmpty {
+            Divider().padding(.horizontal, 4).padding(.vertical, 2)
+            HStack(spacing: 6) {
+                Image(systemName: "tray.full")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                Text("Ignored (\(ignoredItems.count))")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 6).padding(.vertical, 3)
+            ForEach(ignoredItems) { item in
+                InboxRow(item: item, seen: false)
+                    .onTapGesture { openURL(item.htmlURL) }
+            }
+        }
     }
 
     @ViewBuilder
