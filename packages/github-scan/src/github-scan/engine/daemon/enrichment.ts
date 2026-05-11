@@ -92,7 +92,11 @@ export interface EnrichmentDeps {
   model?: string;
   /** PATH to expose to the spawned `claude` process. */
   pathEnv?: string;
-  /** Per-call timeout in ms. Default 60s — `claude` cold start can be ~10s. */
+  /**
+   * Per-call timeout in ms. Default 180s — `claude` cold start can be
+   * ~10s, json-schema-constrained reasoning on Opus 4.6 (1M ctx) can
+   * push total turnaround past 60s for non-trivial PR contexts.
+   */
   timeoutMs?: number;
   logger?: EnrichmentLogger;
 }
@@ -196,7 +200,7 @@ export async function spawnClaude(prompt: string, deps: EnrichmentDeps): Promise
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill("SIGKILL");
-    }, deps.timeoutMs ?? 60_000);
+    }, deps.timeoutMs ?? 180_000);
 
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString("utf-8");
@@ -225,35 +229,40 @@ export async function spawnClaude(prompt: string, deps: EnrichmentDeps): Promise
 
 /**
  * `claude --output-format json` wraps the model output in an envelope:
- *   { type: "result", subtype: "success", result: "<json string>", ... }
+ *   { type: "result", subtype: "success", result: "<text>", structured_output: {...} }
  * Or:
  *   { type: "result", subtype: "error", error: "..." }
  *
- * We only need the inner `result` string; everything else is wrapper.
- * If the wrapper isn't recognized, fall back to treating stdout as the
- * raw result (some `claude` versions have varied this surface).
+ * When `--json-schema` is used, the validated object lives at
+ * `structured_output` and `result` is an empty string. When `--json-schema`
+ * is NOT used, the model's free-text reply is at `result` and
+ * `structured_output` is absent.
+ *
+ * We prefer `structured_output` (the schema-validated path), fall back to
+ * `result` (free text that the caller will JSON.parse), and finally treat
+ * stdout as raw JSON.
  */
 export function extractResultPayload(stdout: string): string {
   const trimmed = stdout.trim();
   if (trimmed.length === 0) return trimmed;
   try {
     const parsed = JSON.parse(trimmed);
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      typeof (parsed as Record<string, unknown>).result === "string"
-    ) {
-      return ((parsed as Record<string, unknown>).result as string).trim();
+    if (parsed && typeof parsed === "object") {
+      const obj = parsed as Record<string, unknown>;
+      // --json-schema path: claude stuffs the validated value here.
+      if (obj.structured_output && typeof obj.structured_output === "object") {
+        return JSON.stringify(obj.structured_output);
+      }
+      // --output-format json without --json-schema: free-text reply.
+      if (typeof obj.result === "string" && obj.result.length > 0) {
+        return obj.result.trim();
+      }
+      if (obj.type === "result") {
+        // Wrapper present but no usable payload (likely an error envelope).
+        return "";
+      }
     }
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      (parsed as Record<string, unknown>).type === "result"
-    ) {
-      // Wrapper present but no string `result` — likely an error envelope.
-      return "";
-    }
-    // The output itself was already the model's JSON.
+    // stdout itself was already the model's JSON.
     return trimmed;
   } catch {
     return trimmed;

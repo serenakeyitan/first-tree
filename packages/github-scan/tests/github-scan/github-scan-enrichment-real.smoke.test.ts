@@ -55,7 +55,7 @@ describe.skipIf(!RUN)("enrichment against real claude CLI", () => {
       const start = Date.now();
       const result = await enrichOne(FAKE_ENTRY, {
         recommendationsPath: recPath,
-        timeoutMs: 90_000,
+        timeoutMs: 240_000,
         logger: {
           info: (m) => console.log("[info]", m),
           warn: (m) => console.warn("[warn]", m),
@@ -75,5 +75,5 @@ describe.skipIf(!RUN)("enrichment against real claude CLI", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  }, 120_000);
+  }, 300_000);
 });
