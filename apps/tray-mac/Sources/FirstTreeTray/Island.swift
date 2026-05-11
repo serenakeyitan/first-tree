@@ -19,6 +19,37 @@ import Combine
 import Foundation
 import SwiftUI
 
+// MARK: - Settings
+
+/// Persistent island-feature settings. Backed by UserDefaults so the
+/// user's choices survive tray restarts.
+///
+/// Today the only knob is `enabled` — a global kill switch users can
+/// flip from the menu bar dropdown when they don't want the popup
+/// (presenting, demo, focus modes, etc.). When `enabled` is false the
+/// SSE client still receives events but does NOT pop the panel.
+@MainActor
+final class IslandSettings: ObservableObject {
+    @Published var enabled: Bool {
+        didSet {
+            UserDefaults.standard.set(enabled, forKey: Self.enabledKey)
+        }
+    }
+
+    private static let enabledKey = "island.enabled"
+
+    init() {
+        // Default to true. If the key has never been set,
+        // UserDefaults.bool returns false — so we override with `object(forKey:)`
+        // nil check.
+        if let stored = UserDefaults.standard.object(forKey: Self.enabledKey) as? Bool {
+            self.enabled = stored
+        } else {
+            self.enabled = true
+        }
+    }
+}
+
 // MARK: - SSE client
 
 /// Minimal SSE consumer for the daemon's `/events` endpoint. Reconnects on
@@ -184,6 +215,12 @@ final class IslandSSEClient: NSObject, ObservableObject, URLSessionDataDelegate 
         latest = ev
         // Show the island. The window manager owns dedup logic — repeated
         // events for the same id within a short window do nothing.
+        // Respect the global island-enable toggle the user can flip from
+        // the menu bar dropdown; the SSE event is still recorded in
+        // `latest` so a "Show latest island" action could re-pop later.
+        if let settings = IslandEnvironmentBridge.shared.settings, !settings.enabled {
+            return
+        }
         IslandWindowManager.shared.present(eventID: ev.id)
     }
 }

@@ -747,6 +747,7 @@ struct FirstTreeTrayApp: App {
     // Island feature.
     @StateObject private var sse = IslandSSEClient()
     @StateObject private var ignored = IgnoredStore()
+    @StateObject private var islandSettings = IslandSettings()
 
     var body: some Scene {
         MenuBarExtra {
@@ -754,11 +755,13 @@ struct FirstTreeTrayApp: App {
                 .environmentObject(inbox)
                 .environmentObject(daemon)
                 .environmentObject(ignored)
+                .environmentObject(islandSettings)
         } label: {
             TrayLabel()
                 .environmentObject(inbox)
                 .environmentObject(sse)
                 .environmentObject(ignored)
+                .environmentObject(islandSettings)
                 .onAppear {
                     // Inject the env objects into the island root view's
                     // hosting controller. The NSPanel is created lazily
@@ -766,7 +769,8 @@ struct FirstTreeTrayApp: App {
                     // is just a safe place to start the SSE stream.
                     sse.start()
                     IslandEnvironmentBridge.shared.attach(
-                        inbox: inbox, sse: sse, ignored: ignored
+                        inbox: inbox, sse: sse, ignored: ignored,
+                        settings: islandSettings
                     )
                 }
         }
@@ -787,11 +791,18 @@ final class IslandEnvironmentBridge {
     private(set) var inbox: InboxModel?
     private(set) var sse: IslandSSEClient?
     private(set) var ignored: IgnoredStore?
+    private(set) var settings: IslandSettings?
 
-    func attach(inbox: InboxModel, sse: IslandSSEClient, ignored: IgnoredStore) {
+    func attach(
+        inbox: InboxModel,
+        sse: IslandSSEClient,
+        ignored: IgnoredStore,
+        settings: IslandSettings
+    ) {
         self.inbox = inbox
         self.sse = sse
         self.ignored = ignored
+        self.settings = settings
     }
 }
 
@@ -841,6 +852,7 @@ struct DropdownView: View {
     @EnvironmentObject var inbox: InboxModel
     @EnvironmentObject var daemon: DaemonController
     @EnvironmentObject var ignored: IgnoredStore
+    @EnvironmentObject var islandSettings: IslandSettings
     @Environment(\.openURL) var openURL
 
     var body: some View {
@@ -851,6 +863,7 @@ struct DropdownView: View {
             Divider().padding(.horizontal, 4).padding(.vertical, 2)
             content
             ignoredSection
+            islandSection
             Divider().padding(.horizontal, 4).padding(.vertical, 2)
             FooterButton(title: "Open dashboard", systemImage: "rectangle.on.rectangle") {
                 openURL(URL(string: "\(daemonBaseURL)/")!)
@@ -887,6 +900,34 @@ struct DropdownView: View {
             ForEach(ignoredItems) { item in
                 InboxRow(item: item, seen: false)
                     .onTapGesture { openURL(item.htmlURL) }
+            }
+        }
+    }
+
+    /// Island controls section:
+    ///   - On/Off toggle (global kill switch for the popup)
+    ///   - "Show ignored as islands again" — clears the dismissed-IDs set
+    ///     so next time the daemon emits recommendation events for those
+    ///     items, they re-pop. Useful when the user changes their mind
+    ///     after dismissing.
+    private var islandSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Divider().padding(.horizontal, 4).padding(.vertical, 2)
+            HStack(spacing: 8) {
+                Image(systemName: "rectangle.on.rectangle.angled")
+                    .frame(width: 16)
+                Text("Island popups")
+                    .font(.system(size: 13))
+                Spacer()
+                Toggle("", isOn: $islandSettings.enabled)
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .labelsHidden()
+            }
+            .padding(.vertical, 5)
+            .padding(.horizontal, 6)
+            FooterButton(title: "Show ignored items again", systemImage: "arrow.uturn.backward.circle") {
+                IslandWindowManager.shared.forgetDismissed()
             }
         }
     }
