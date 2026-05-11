@@ -86,9 +86,7 @@ export function splitIntoLines(input: string): string[] {
     parts.pop();
   }
   // Strip the optional `\r` from each line (mirrors Rust behaviour).
-  return parts.map((line) =>
-    line.endsWith("\r") ? line.slice(0, -1) : line,
-  );
+  return parts.map((line) => (line.endsWith("\r") ? line.slice(0, -1) : line));
 }
 
 /** Keep-alive comment-frame bytes. Must match `http.rs:282` exactly. */
@@ -108,7 +106,24 @@ export type SseEvent =
       total: number;
       new_count: number;
     }
-  | { kind: "activity"; line: string };
+  | { kind: "activity"; line: string }
+  | {
+      /**
+       * Island-feature event: the daemon has produced a fresh action
+       * recommendation for an inbox entry. Subscribers (the tray) can
+       * use this to trigger their island UI without re-polling /inbox.
+       *
+       * Wire format: SSE event name `recommendation`, JSON payload
+       * `{ "id": "<entry id>", "summary": "<one-line>", "action_kind": "<approve_pr|...>" }`.
+       * Full action args are intentionally NOT in the SSE payload —
+       * subscribers fetch them via /inbox to keep the wire surface small
+       * and guarantee a single source of truth.
+       */
+      kind: "recommendation";
+      id: string;
+      summary: string;
+      action_kind: "approve_pr" | "comment" | "close_issue" | "request_changes";
+    };
 
 export interface SseBus {
   /**
@@ -128,6 +143,10 @@ export function encodeSseEvent(event: SseEvent): string {
   if (event.kind === "inbox") {
     const payload = `{"last_poll":${JSON.stringify(event.last_poll)},"total":${event.total},"new_count":${event.new_count}}`;
     return encodeSseFrame("inbox", payload);
+  }
+  if (event.kind === "recommendation") {
+    const payload = `{"id":${JSON.stringify(event.id)},"summary":${JSON.stringify(event.summary)},"action_kind":${JSON.stringify(event.action_kind)}}`;
+    return encodeSseFrame("recommendation", payload);
   }
   return encodeSseFrame("activity", event.line);
 }
@@ -175,9 +194,7 @@ export function createInboxMtimeBus(options: {
         last_poll?: unknown;
         notifications?: unknown;
       };
-      const notifications = Array.isArray(p.notifications)
-        ? p.notifications
-        : [];
+      const notifications = Array.isArray(p.notifications) ? p.notifications : [];
       const last_poll = typeof p.last_poll === "string" ? p.last_poll : "";
       let new_count = 0;
       for (const entry of notifications) {

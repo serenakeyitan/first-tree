@@ -31,6 +31,10 @@ export interface GitHubScanPaths {
   identityCache: string;
   /** `inbox.json.lock` — advisory lock for concurrent writers. */
   inboxLock: string;
+  /** `recommendations.json` — island-feature LLM action recommendations cache. */
+  recommendations: string;
+  /** `recommendations.json.lock` — advisory lock for the recommendations cache. */
+  recommendationsLock: string;
 }
 
 export const GITHUB_SCAN_DIR_ENV = "GITHUB_SCAN_DIR";
@@ -41,7 +45,8 @@ export function resolveGitHubScanPaths(deps: GitHubScanPathsDeps = {}): GitHubSc
   const homeDir = deps.homeDir ?? homedir;
 
   const override = env(GITHUB_SCAN_DIR_ENV);
-  const root = override && override.length > 0 ? override : join(homeDir(), ".first-tree/github-scan");
+  const root =
+    override && override.length > 0 ? override : join(homeDir(), ".first-tree/github-scan");
 
   return {
     root,
@@ -50,5 +55,7 @@ export function resolveGitHubScanPaths(deps: GitHubScanPathsDeps = {}): GitHubSc
     claimsDir: join(root, "claims"),
     identityCache: join(root, "identity.json"),
     inboxLock: join(root, "inbox.json.lock"),
+    recommendations: join(root, "recommendations.json"),
+    recommendationsLock: join(root, "recommendations.json.lock"),
   };
 }

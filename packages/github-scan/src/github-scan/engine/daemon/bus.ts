@@ -77,6 +77,18 @@ export type BusEvent =
       status?: string;
       /** Error or result summary. */
       summary?: string;
+    }
+  | {
+      /**
+       * Island feature: a fresh action recommendation was produced for
+       * an inbox entry. Subscribers (the SSE adapter for the tray) can
+       * trigger their UI without re-polling /inbox. Full action args are
+       * fetched via /inbox to keep the wire surface small.
+       */
+      kind: "recommendation";
+      id: string;
+      summary: string;
+      action_kind: "approve_pr" | "comment" | "close_issue" | "request_changes";
     };
 
 export type BusListener = (event: BusEvent) => void;
@@ -197,6 +209,15 @@ export function toSseBus(bus: Bus): {
           listener({
             kind: "activity",
             line: JSON.stringify(payload),
+          });
+          return;
+        }
+        if (event.kind === "recommendation") {
+          listener({
+            kind: "recommendation",
+            id: event.id,
+            summary: event.summary,
+            action_kind: event.action_kind,
           });
         }
       });

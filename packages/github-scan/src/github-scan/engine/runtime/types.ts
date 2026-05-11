@@ -137,10 +137,7 @@ export const GITHUB_SCAN_LABEL_META = {
     description: "GitHub Scan: needs human attention",
   },
   "github-scan:done": { color: "0e8a16", description: "GitHub Scan: handled" },
-} as const satisfies Record<
-  string,
-  { color: string; description: string }
->;
+} as const satisfies Record<string, { color: string; description: string }>;
 
 export const ALL_GITHUB_SCAN_LABELS = [
   "github-scan:new",
@@ -149,3 +146,87 @@ export const ALL_GITHUB_SCAN_LABELS = [
   "github-scan:done",
 ] as const;
 export type GitHubScanLabel = (typeof ALL_GITHUB_SCAN_LABELS)[number];
+
+/**
+ * Island feature: structured action recommendations.
+ *
+ * The LLM enrichment worker produces one of these per `human` inbox entry.
+ * The schema is intentionally narrow — only whitelisted action kinds may be
+ * produced or executed. Anything else is rejected at parse time, so even a
+ * prompt-injected LLM cannot make the tray shell out to arbitrary commands.
+ *
+ * Args are validated per-kind; the dispatcher passes them as a `Process`
+ * argv array (never string-concatenated into a shell), so injection in
+ * comment/body fields is rendered harmless.
+ *
+ * See [`docs/island-design.md`](../../../../../../README.md) and
+ * `serenakeyitan/first-tree#3` for the full design.
+ */
+
+const ApprovePrArgs = z.object({
+  pr_number: z.number().int().positive(),
+  comment: z.string().max(2000).default(""),
+});
+
+const CommentArgs = z.object({
+  /** PR or Issue number. */
+  number: z.number().int().positive(),
+  /** Whether the parent is a PR or an issue. Affects the gh subcommand. */
+  target: z.enum(["pr", "issue"]),
+  body: z.string().min(1).max(20_000),
+});
+
+const CloseIssueArgs = z.object({
+  issue_number: z.number().int().positive(),
+  comment: z.string().max(2000).default(""),
+});
+
+const RequestChangesArgs = z.object({
+  pr_number: z.number().int().positive(),
+  body: z.string().min(1).max(20_000),
+});
+
+export const ActionSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("approve_pr"), args: ApprovePrArgs }),
+  z.object({ kind: z.literal("comment"), args: CommentArgs }),
+  z.object({ kind: z.literal("close_issue"), args: CloseIssueArgs }),
+  z.object({ kind: z.literal("request_changes"), args: RequestChangesArgs }),
+]);
+export type Action = z.infer<typeof ActionSchema>;
+
+export const ALL_ACTION_KINDS = [
+  "approve_pr",
+  "comment",
+  "close_issue",
+  "request_changes",
+] as const satisfies ReadonlyArray<Action["kind"]>;
+
+export const RecommendationSchema = z.object({
+  /** The inbox entry this recommendation is for (matches InboxEntry.id). */
+  id: z.string(),
+  /** One-line UI summary, e.g. "Approve auto-rebase". */
+  summary: z.string().min(1).max(200),
+  /** Why the LLM chose this — shown on hover or in the expanded view. */
+  rationale: z.string().max(2000),
+  /** The structured, whitelisted action. */
+  action: ActionSchema,
+  /** Unix epoch (seconds) when the recommendation was generated. */
+  generated_at: z.number().int().nonnegative(),
+  /** Model identifier, e.g. "claude-sonnet-4-5". For cache invalidation. */
+  model: z.string(),
+  /**
+   * Hash of the input the LLM saw (entry id + updated_at). When the inbox
+   * entry's `updated_at` changes, the cache is stale and we re-enrich.
+   */
+  input_hash: z.string(),
+});
+export type Recommendation = z.infer<typeof RecommendationSchema>;
+
+/** Top-level shape of `recommendations.json`. */
+export const RecommendationCacheSchema = z.object({
+  /** Cache schema version — bump if we ever change the layout. */
+  version: z.literal(1),
+  /** Map from inbox entry id → recommendation. */
+  recommendations: z.record(z.string(), RecommendationSchema),
+});
+export type RecommendationCache = z.infer<typeof RecommendationCacheSchema>;
