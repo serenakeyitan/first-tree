@@ -449,6 +449,11 @@ final class IslandWindowManager {
     /// Last id presented; used to suppress repeated events for the same id.
     private var lastShownID: String? = nil
     private var lastShownAt: Date? = nil
+    /// Items the user has explicitly resolved (Execute / Post / Ignore /
+    /// dismiss-via-X). Repeated `recommendation` events for these ids do
+    /// NOT re-pop the island — only a fresh updated_at on the daemon
+    /// side (which becomes a NEW id-or-version) would qualify.
+    private var dismissedIDs: Set<String> = []
 
     /// Show the island for the entry tagged by `eventID`. The view uses
     /// the shared inbox model to look up the full entry context. If the
@@ -456,6 +461,11 @@ final class IslandWindowManager {
     /// next /inbox poll), we still show the island; the view will
     /// re-render as soon as the entry lands.
     func present(eventID: String) {
+        // Don't re-pop something the user has already acted on this
+        // session. Without this, a daemon that keeps emitting the same
+        // recommendation (e.g. on every poll because the entry is still
+        // human-status) would flood the user.
+        if dismissedIDs.contains(eventID) { return }
         // Dedup: same id within 5s = no-op (we already showed it).
         if let last = lastShownID, last == eventID,
            let when = lastShownAt, Date().timeIntervalSince(when) < 5 {
@@ -468,14 +478,42 @@ final class IslandWindowManager {
         window?.orderFrontRegardless()
     }
 
-    func dismiss() {
+    /// Hide the panel and remember the id so future repeated events
+    /// for it don't re-open the panel. Called for every island-side
+    /// resolution path: Execute success, Post success, Ignore, X-close,
+    /// Cancel from doOther.
+    func dismiss(rememberID: String? = nil) {
+        if let id = rememberID { dismissedIDs.insert(id) }
         window?.orderOut(nil)
+    }
+
+    /// Clear the dismissed-id memory. Useful if we ever want a "show
+    /// these to me again" action from the menu bar.
+    func forgetDismissed() {
+        dismissedIDs.removeAll()
+    }
+
+    /// Promote the panel to key window so SwiftUI text fields inside
+    /// can receive keyboard input. Called when the user transitions
+    /// the island into a mode that has a text input.
+    func makePanelKey() {
+        window?.makeKeyAndOrderFront(nil)
+        // Bring our process forward only minimally — we don't want to
+        // steal Cmd-Tab order from the user's main app. Without this
+        // call though, the panel can render key but keystrokes still go
+        // to the previously frontmost app on some macOS versions.
+        NSApp.activate(ignoringOtherApps: false)
     }
 
     private func ensureWindow() {
         guard window == nil else { return }
-        let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 110),
+        // KeyableIslandPanel: same as a borderless NSPanel but answers
+        // YES to canBecomeKey/canBecomeMain so text fields inside the
+        // panel actually receive keyboard input. .nonactivatingPanel
+        // alone blocks key-window status. Without this, clicking the
+        // text field shows the caret but typing does nothing.
+        let panel = KeyableIslandPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 130),
             styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -507,7 +545,7 @@ final class IslandWindowManager {
             return
         }
         let root = AnyView(
-            IslandRootView(onDismiss: { [weak self] in self?.dismiss() })
+            IslandRootView(onDismiss: { [weak self] id in self?.dismiss(rememberID: id) })
                 .environmentObject(inbox)
                 .environmentObject(sse)
                 .environmentObject(ignored)
@@ -543,7 +581,7 @@ final class IslandWindowManager {
 /// SwiftUI root view inside the panel. Reads the latest event from the
 /// shared SSE client and the matching item from InboxModel.
 struct IslandRootView: View {
-    let onDismiss: () -> Void
+    let onDismiss: (String?) -> Void
     @EnvironmentObject var inbox: InboxModel
     @EnvironmentObject var sse: IslandSSEClient
     @EnvironmentObject var ignored: IgnoredStore
@@ -554,6 +592,7 @@ struct IslandRootView: View {
     @State private var inFlight: Bool = false
     @State private var statusMessage: String? = nil
     @State private var preview: IslandTranslateClient.TranslateOK? = nil
+    @FocusState private var commentFieldFocused: Bool
 
     private var currentItem: InboxItem? {
         guard let ev = sse.latest else { return nil }
@@ -601,7 +640,7 @@ struct IslandRootView: View {
                 .foregroundColor(.white.opacity(0.7))
                 .lineLimit(1)
             Spacer()
-            Button(action: onDismiss) {
+            Button(action: { onDismiss(item.id) }) {
                 Image(systemName: "xmark.circle.fill")
                     .foregroundColor(.white.opacity(0.5))
             }
@@ -637,6 +676,12 @@ struct IslandRootView: View {
                 }
                 IslandButton(label: "Do other…", systemImage: "pencil", tint: .blue) {
                     mode = .doOther
+                    // Make the panel key + focus the text field so the
+                    // user can type immediately, no extra click required.
+                    IslandWindowManager.shared.makePanelKey()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        commentFieldFocused = true
+                    }
                 }
                 IslandButton(label: "Ignore", systemImage: "xmark.circle", tint: .gray) {
                     onIgnore(item: item)
@@ -655,35 +700,49 @@ struct IslandRootView: View {
     private func doOtherBody(item: InboxItem) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(doOtherRaw
-                 ? "Type a raw `gh` command to run on this repo:"
-                 : "What should we do instead?")
+                 ? "Advanced — type a raw `gh` command (runs as you typed it):"
+                 : "Post a comment on this \(item.type == "Issue" ? "issue" : "PR"):")
                 .font(.system(size: 12))
                 .foregroundColor(.white.opacity(0.85))
+                .fixedSize(horizontal: false, vertical: true)
             TextField("", text: $doOtherText, prompt: Text(doOtherRaw
-                                                            ? "gh pr review 1 --request-changes --body \"…\""
-                                                            : "comment that we should add tests first"))
+                                                            ? "pr review 4 --request-changes --body \"need tests\""
+                                                            : "type your comment here"),
+                      axis: .vertical)
                 .textFieldStyle(.plain)
+                .lineLimit(3, reservesSpace: true)
                 .padding(8)
                 .background(Color.white.opacity(0.08))
                 .cornerRadius(6)
                 .foregroundColor(.white)
-                .onSubmit { Task { await onDoOtherSubmit(item: item) } }
+                .focused($commentFieldFocused)
+                .onSubmit {
+                    if !doOtherText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Task { await onDoOtherSubmit(item: item) }
+                    }
+                }
             HStack(spacing: 8) {
-                Toggle("raw `gh` mode", isOn: $doOtherRaw)
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
-                    .foregroundColor(.white.opacity(0.7))
-                    .font(.system(size: 11))
+                HStack(spacing: 4) {
+                    Toggle("", isOn: $doOtherRaw)
+                        .toggleStyle(.switch)
+                        .controlSize(.mini)
+                        .labelsHidden()
+                    Text(doOtherRaw ? "raw gh" : "comment")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(doOtherRaw ? .orange.opacity(0.9) : .white.opacity(0.55))
+                }
                 Spacer()
                 IslandButton(label: "Cancel", systemImage: "arrow.uturn.backward", tint: .gray) {
                     mode = .compact
                     doOtherText = ""
                 }
-                IslandButton(label: doOtherRaw ? "Run" : "Translate",
-                             systemImage: doOtherRaw ? "play.fill" : "arrow.right",
-                             tint: .blue) {
-                    Task { await onDoOtherSubmit(item: item) }
+                let canSubmit = !doOtherText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                IslandButton(label: doOtherRaw ? "Run" : "Post",
+                             systemImage: doOtherRaw ? "play.fill" : "paperplane.fill",
+                             tint: canSubmit ? .blue : .gray) {
+                    if canSubmit { Task { await onDoOtherSubmit(item: item) } }
                 }
+                .opacity(canSubmit ? 1.0 : 0.5)
                 if inFlight { ProgressView().scaleEffect(0.5) }
             }
         }
@@ -727,7 +786,7 @@ struct IslandRootView: View {
             // Mark seen so the tray dropdown dims it. The daemon will
             // transition the entry to `done` on the next poll.
             inbox.markSeen(item.id)
-            onDismiss()
+            onDismiss(item.id)
         case .failed(let msg):
             statusMessage = "Execute failed: \(String(msg.prefix(80)))"
         }
@@ -735,7 +794,7 @@ struct IslandRootView: View {
 
     private func onIgnore(item: InboxItem) {
         ignored.add(item.id)
-        onDismiss()
+        onDismiss(item.id)
     }
 
     private func onDoOtherSubmit(item: InboxItem) async {
@@ -754,19 +813,31 @@ struct IslandRootView: View {
             switch result {
             case .ok:
                 inbox.markSeen(item.id)
-                onDismiss()
+                onDismiss(item.id)
             case .failed(let msg):
                 statusMessage = "Run failed: \(String(msg.prefix(80)))"
             }
         } else {
-            let result = await IslandTranslateClient.translate(entryID: item.id, userText: text)
+            // Comment mode: skip the LLM round-trip. The user typed the
+            // literal comment they want — post it directly. The whitelist
+            // dispatcher's `comment` kind handles target=pr vs issue and
+            // passes the body to gh as an argv element (no shell, no
+            // injection risk).
+            let target = (item.type == "Issue") ? "issue" : "pr"
+            let args: [String: AnyCodable] = [
+                "number": AnyCodable(item.number as AnyHashable),
+                "target": AnyCodable(target as AnyHashable),
+                "body": AnyCodable(text as AnyHashable),
+            ]
+            let result = await IslandActionDispatcher.execute(
+                item: item, kind: .comment, args: args
+            )
             switch result {
-            case .ok(let t):
-                preview = t
-                mode = .preview
-                statusMessage = nil
+            case .ok:
+                inbox.markSeen(item.id)
+                onDismiss(item.id)
             case .failed(let msg):
-                statusMessage = "Translate failed: \(String(msg.prefix(80)))"
+                statusMessage = "Post failed: \(String(msg.prefix(120)))"
             }
         }
     }
@@ -779,7 +850,7 @@ struct IslandRootView: View {
         switch result {
         case .ok:
             inbox.markSeen(item.id)
-            onDismiss()
+            onDismiss(item.id)
         case .failed(let msg):
             statusMessage = "Execute failed: \(String(msg.prefix(80)))"
             mode = .doOther // back to text input so user can retry
@@ -823,4 +894,15 @@ struct IslandButton: View {
         .onHover { hover = $0 }
         .onTapGesture(perform: action)
     }
+}
+
+// MARK: - Keyable island panel
+
+/// A borderless NSPanel that can become the key window so SwiftUI text
+/// fields inside it actually receive keyboard input. The default
+/// borderless + nonactivatingPanel combo returns NO for both, leaving
+/// the text field visually focusable but inert. We override here.
+final class KeyableIslandPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
 }
